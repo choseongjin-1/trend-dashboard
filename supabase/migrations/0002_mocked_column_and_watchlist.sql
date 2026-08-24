@@ -1,19 +1,9 @@
-create table if not exists trend_snapshots (
-  id uuid primary key default gen_random_uuid(),
-  source text not null,
-  region text not null,
-  fetched_at timestamptz not null,
-  items jsonb not null,
-  created_at timestamptz not null default now()
-);
+-- Round 3: scheduled-ingestion cache correctness + watchlist foundation.
 
-create index if not exists trend_snapshots_source_region_idx
-  on trend_snapshots (source, region, fetched_at desc);
-
--- Added for the scheduled-ingestion round: distinguishes real API-backed
--- snapshots from mock-fallback ones, so /api/trends can propagate the
--- `mocked` flag correctly when serving a cached snapshot. `if not exists`
--- keeps this script safe to re-run against a table that already has rows.
+-- Distinguishes real API-backed snapshots from mock-fallback ones, so
+-- /api/trends can propagate the `mocked` flag correctly when serving a
+-- cached snapshot. `if not exists` keeps this safe to run against a table
+-- that already has rows.
 alter table trend_snapshots
   add column if not exists mocked boolean not null default false;
 

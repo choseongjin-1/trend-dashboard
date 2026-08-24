@@ -966,3 +966,83 @@ dev 로그 전수 확인 — 기존에 문서화한 `mocked` 컬럼 부재 에�
 ### [결론]
 `c784168` 반영 후에도 lint/test(25개, 불변)/build/dev 8요청 curl 전부 그린 — 회귀 없음.
 `backend-loop`에 머지 커밋 진행.
+
+---
+
+## 라이브 스키마 적용 재검증 + 마이그레이션 구조 개편
+
+> 사용자가 SQL Editor에서 당시의 `supabase/schema.sql`(mocked 컬럼 + watchlist 테이블/RLS)을
+> 라이브 프로젝트에 실행 완료. 이전 라운드부터 이어진 차단 항목(A) 재검증 + 오케스트레이터 요청으로
+> 스키마 파일을 `supabase/migrations/` 구조로 개편.
+
+### [재검증 — 실측 증거]
+
+**`npm run dev -- -p 3001` (실 크리덴셜) + `/api/trends?region=KR` 2회 연속 호출**
+```
+1차: fetchedAt: 2026-08-24T08:39:36.834+00:00  mocked: False  (1.4s)
+2차: fetchedAt: 2026-08-24T08:39:36.834+00:00  mocked: False  (0.6s)  ← 동일 fetchedAt = 캐시 히트
+```
+호출 시점(`date -u` 실측): `2026-08-24T08:43:21Z` — 스냅샷 나이 약 3분45초로 15분 캐시 윈도우 이내.
+두 호출 모두 동일한 `fetchedAt`을 반환했다는 것은 두 번째 호출이 YouTube를 다시 부르지 않고
+Supabase에 저장된 동일 스냅샷을 그대로 서빙했다는 뜻 (`getFreshTrendSnapshot`이 새 fetch를
+건너뛰었음). dev 로그에도 두 요청 모두 `saveTrendSnapshot`/`getRecentTrendSnapshots` 호출 흔적이
+없어(캐시 히트 경로는 `getFreshTrendSnapshot` 조회 1회만 실행) 일치.
+
+**`/api/trends/history?region=KR`**
+```
+[{"id":"7a1e85c0-...","source":"youtube","region":"KR",
+  "fetched_at":"2026-08-24T08:39:36.834+00:00","mocked":false,"items":[...]}]
+```
+실제 스냅샷 반환, `mocked` 필드 정상 포함 — 더 이상 `PGRST204`/`42703` 에러 없음.
+
+**`watchlist` 테이블 존재 확인**: `/api/watchlist` GET은 세션 체크가 쿼리보다 먼저라 401이 테이블
+존재 여부를 증명하지 못하므로, 서비스롤 클라이언트로 직접 조회:
+```
+watchlist table exists, row count: 0
+```
+(가입한 유저가 아직 없어 0건은 정상)
+
+**dev 로그 전체 스캔**: `grep -c "PGRST204\|42703" ` → **0** — 지난 두 라운드 내내 반복되던 스키마
+드리프트 에러가 완전히 사라짐. 세션 종료 후 `lsof -iTCP:3001 -sTCP:LISTEN` 출력 없음 → 정상 종료.
+
+**결론**: 이전에 미검증 상태였던 성공 기준 2("DB-우선 캐시 히트")와 4("watchlist 스키마 실적용")가
+이제 완전히 충족됨 — 규칙 10으로 중단했던 두 항목이 모두 해소됨.
+
+### [마이그레이션 구조 개편]
+사용자 요청: 하나로 계속 자라는 `schema.sql`을 매번 머릿속으로 diff하는 대신, 파일 단위로 적용
+여부를 한눈에 알 수 있게 재구성.
+
+**변경**
+- `supabase/migrations/0001_initial.sql` 신설 — `trend_snapshots` 테이블 + 인덱스 (기존
+  `schema.sql`의 1~11행과 동일)
+- `supabase/migrations/0002_mocked_column_and_watchlist.sql` 신설 — `mocked` 컬럼 + `watchlist`
+  테이블/인덱스/RLS 3정책 (기존 `schema.sql`의 13~51행과 동일) — 라운드 경계와 정확히 일치해
+  자연스러운 분할 기준
+- `supabase/migrations/APPLIED.md` 신설 — 파일별 적용 상태 표. 상단에 컨벤션 명시: 향후 스키마
+  변경은 항상 새 번호 파일(`0003_*.sql`...)로, 이미 적용된 파일은 절대 수정하지 않음. 새 마이그레이션은
+  사용자가 실행을 확인하기 전까지 "pending"으로 남고, 확인 후 오케스트레이터가 상태를 갱신.
+  0001/0002는 방금 라이브 적용이 실측 확인되었으므로 둘 다 "applied", 날짜 2026-08-24로 기록.
+- 기존 `supabase/schema.sql` 삭제 — 중복 SQL을 두 곳에 남기지 않기 위해 포인터 주석이 아닌 완전
+  삭제를 선택 (마이그레이션 파일들이 내용을 온전히 대체하므로 포인터가 가리킬 대상이 사라지는 게
+  아니라 명확히 옮겨간 것)
+- `diff`로 분할된 두 파일의 SQL 내용(주석/빈 줄 제외)이 기존 `schema.sql`과 완전히 동일함을 확인
+  — 분할 과정에서 SQL 자체는 한 글자도 바뀌지 않음
+
+**참조 확인**: `grep -rn "schema\.sql"` → `LOOP_LOG.md` 안의 과거 기록(당시 시점 기준 사실을 담은
+로그 항목)만 검출, 코드/현재 문서 어디에도 옛 경로 참조 없음 — 로그는 시계열 기록이라 과거 항목을
+고쳐 쓰지 않고 그대로 둠(이 항목이 최신 상태를 안내).
+
+**`npm run lint` / `npm run build`** → 둘 다 클린 (SQL/문서 파일만 바뀐 변경이라 예상대로 앱에는
+영향 없음, 라우트 6개 정상 생성 재확인).
+
+### [검증] — 성공 기준 대조
+1. 캐시 히트 실측(동일 fetchedAt, 스냅샷 나이 <15분) → **충족**
+2. `/api/trends/history` 실 스냅샷 + `mocked` 필드 반환 → **충족**
+3. `watchlist` 테이블 라이브 존재(서비스롤 직접 조회로 확인) → **충족**
+4. 에러 로그 전수 스캔 결과 `PGRST204`/`42703` 0건 → **충족**
+5. 마이그레이션 구조 개편(0001/0002 분할, APPLIED.md, 구 파일 삭제, 참조 정리) + lint/build 클린
+   → **충족**
+
+### [종료]
+5개 기준 모두 실측 증거로 충족, 1회 반복으로 종료. 이전 두 라운드에 걸쳐 있던 미해결 항목(A)이
+완전히 해소됨 — 더 이상 남은 블로커 없음.
