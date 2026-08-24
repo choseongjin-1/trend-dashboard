@@ -14,6 +14,7 @@ import { AuthModal } from "@/components/AuthModal";
 import { RegionTabs } from "@/components/RegionTabs";
 import { WatchlistPanel } from "@/components/WatchlistPanel";
 import { FlatSignal } from "@/components/FlatSignal";
+import { KeywordDetailModal } from "@/components/KeywordDetailModal";
 
 export default function Home() {
   const [region, setRegion] = useState<string>(DEFAULT_REGION);
@@ -24,6 +25,7 @@ export default function Home() {
 
   const auth = useAuth();
   const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [detailKeyword, setDetailKeyword] = useState<string | null>(null);
   // null = watchlist feature unavailable (logged out, or the API failed) — hide its UI entirely.
   const [watchlist, setWatchlist] = useState<WatchlistRow[] | null>(null);
 
@@ -118,7 +120,7 @@ export default function Home() {
           </header>
 
           <SpikeLine />
-          <h1 className="mt-4 font-display text-3xl font-black leading-[1.1] tracking-tight text-text sm:text-4xl">
+          <h1 className="mt-4 font-display text-2xl font-black leading-[1.15] tracking-tight text-text sm:text-4xl">
             지금, 가장 먼저 뜨는 키워드
           </h1>
           <p className="mt-3 max-w-md text-sm text-text-dim">
@@ -196,15 +198,23 @@ export default function Home() {
                   </span>
                   {watchlistAvailable && (
                     <button
-                      onClick={() => toggleWatch(item.keyword)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleWatch(item.keyword);
+                      }}
                       aria-label={isWatched ? "워치리스트에서 제거" : "워치리스트에 추가"}
                       aria-pressed={isWatched}
-                      className={`shrink-0 text-base leading-none ${isWatched ? "text-signal" : "text-text-dim hover:text-signal"}`}
+                      className={`shrink-0 p-1 -m-1 text-base leading-none ${isWatched ? "text-signal" : "text-text-dim hover:text-signal"}`}
                     >
                       {isWatched ? "★" : "☆"}
                     </button>
                   )}
-                  <span className="flex-1 text-sm">{item.keyword}</span>
+                  <button
+                    onClick={() => setDetailKeyword(item.keyword)}
+                    className="min-w-0 flex-1 truncate py-1 text-left text-sm hover:text-signal"
+                  >
+                    {item.keyword}
+                  </button>
                   {historyMap.size > 0 && (
                     <>
                       {history && <RankSparkline history={history} />}
@@ -237,6 +247,15 @@ export default function Home() {
         onSignIn={auth.signIn}
         onSignUp={auth.signUp}
       />
+
+      {detailKeyword && (
+        <KeywordDetailModal
+          keyword={detailKeyword}
+          regionLabel={REGIONS.find((r) => r.code === region)?.label ?? region}
+          history={historyMap.get(detailKeyword)}
+          onClose={() => setDetailKeyword(null)}
+        />
+      )}
     </div>
   );
 }
