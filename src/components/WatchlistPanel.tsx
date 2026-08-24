@@ -14,12 +14,12 @@ interface WatchlistPanelProps {
  */
 export function WatchlistPanel({ entries, onRemove }: WatchlistPanelProps) {
   return (
-    <section className="mb-6 rounded-md border border-signal-dim/60 bg-surface px-4 py-3">
-      <h2 className="mb-2 font-data text-[11px] uppercase tracking-widest text-signal">
+    <section className="mb-6 rounded-sm border border-flap-dim/20 bg-panel px-4 py-3">
+      <h2 className="mb-2 font-data text-[11px] uppercase tracking-widest text-flap-dim">
         내 워치리스트
       </h2>
       {entries.length === 0 ? (
-        <p className="text-xs text-text-dim">
+        <p className="text-xs text-flap-dim">
           랭킹에서 ☆ 버튼을 눌러 추적할 키워드를 추가하세요.
         </p>
       ) : (
@@ -29,11 +29,11 @@ export function WatchlistPanel({ entries, onRemove }: WatchlistPanelProps) {
               <button
                 onClick={() => onRemove(entry.id)}
                 title="워치리스트에서 제거"
-                className="group flex items-center gap-1.5 rounded-full border border-signal/30 bg-signal/10 px-3 py-1 text-xs text-text"
+                className="group flex items-center gap-1.5 rounded-sm border border-flap-dim/25 bg-casing/60 px-3 py-1 text-xs text-flap"
               >
-                <span className="font-data text-[10px] text-text-dim">{entry.region}</span>
+                <span className="font-data text-[10px] text-flap-dim">{entry.region}</span>
                 {entry.keyword}
-                <span className="text-text-dim group-hover:text-fall">✕</span>
+                <span className="text-flap-dim group-hover:text-falling">✕</span>
               </button>
             </li>
           ))}

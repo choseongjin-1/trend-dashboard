@@ -13,14 +13,14 @@ interface AuthHeaderProps {
  */
 export function AuthHeader({ user, loading, onSignOut, onOpenAuth }: AuthHeaderProps) {
   if (loading) {
-    return <div className="h-8 w-24 animate-pulse rounded-full bg-surface-2" />;
+    return <div className="h-8 w-24 animate-pulse rounded-sm bg-panel" />;
   }
 
   if (!user) {
     return (
       <button
         onClick={onOpenAuth}
-        className="rounded-full border border-signal/40 px-4 py-1.5 text-sm font-medium text-signal transition hover:bg-signal/10"
+        className="rounded-sm border border-flap/40 px-4 py-1.5 font-data text-xs tracking-wide text-flap transition hover:bg-flap/10"
       >
         로그인
       </button>
@@ -31,14 +31,14 @@ export function AuthHeader({ user, loading, onSignOut, onOpenAuth }: AuthHeaderP
     <div className="flex items-center gap-2.5">
       <span
         aria-hidden="true"
-        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-signal/15 font-display text-xs font-bold text-signal"
+        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-sm bg-flap/10 font-display text-xs text-flap"
       >
         {user.email.charAt(0).toUpperCase()}
       </span>
-      <span className="hidden text-sm text-text-dim sm:inline">{user.email}</span>
+      <span className="hidden font-data text-xs text-flap-dim sm:inline">{user.email}</span>
       <button
         onClick={onSignOut}
-        className="rounded-full border border-hairline px-3 py-1.5 text-xs text-text-dim transition hover:border-signal/40 hover:text-text"
+        className="rounded-sm border border-flap-dim/25 px-3 py-1.5 font-data text-[11px] text-flap-dim transition hover:border-flap/40 hover:text-flap"
       >
         로그아웃
       </button>

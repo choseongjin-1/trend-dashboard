@@ -48,34 +48,34 @@ export function AuthModal({ open, error, onClose, onSignIn, onSignUp }: AuthModa
       <form
         onClick={(e) => e.stopPropagation()}
         onSubmit={handleSubmit}
-        className="w-full max-w-sm rounded-lg border border-hairline bg-surface p-6"
+        className="w-full max-w-sm rounded-sm border border-flap-dim/20 bg-panel p-6 shadow-[0_1px_0_rgba(255,255,255,0.04)_inset,0_10px_30px_rgba(0,0,0,0.5)]"
       >
         <div className="mb-6 flex items-center justify-between">
-          <h2 className="font-display text-xl font-black tracking-tight text-text">
+          <h2 className="font-display text-xl text-flap">
             {mode === "signin" ? "로그인" : "회원가입"}
           </h2>
           <button
             type="button"
             onClick={onClose}
             aria-label="닫기"
-            className="font-data text-text-dim hover:text-signal"
+            className="font-data text-flap-dim hover:text-flap"
           >
             ✕
           </button>
         </div>
 
-        <label className="mb-4 block font-data text-[11px] uppercase tracking-widest text-text-dim">
+        <label className="mb-4 block font-data text-[11px] uppercase tracking-widest text-flap-dim">
           이메일
           <input
             type="email"
             required
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="mt-1.5 w-full border-0 border-b border-hairline bg-transparent px-0.5 py-1.5 font-data text-sm text-text outline-none focus:border-b-2 focus:border-signal"
+            className="mt-1.5 w-full border-0 border-b border-flap-dim/25 bg-transparent px-0.5 py-1.5 font-data text-sm text-flap outline-none focus:border-b-2 focus:border-flap"
           />
         </label>
 
-        <label className="mb-5 block font-data text-[11px] uppercase tracking-widest text-text-dim">
+        <label className="mb-5 block font-data text-[11px] uppercase tracking-widest text-flap-dim">
           비밀번호
           <input
             type="password"
@@ -83,21 +83,21 @@ export function AuthModal({ open, error, onClose, onSignIn, onSignUp }: AuthModa
             minLength={6}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="mt-1.5 w-full border-0 border-b border-hairline bg-transparent px-0.5 py-1.5 font-data text-sm text-text outline-none focus:border-b-2 focus:border-signal"
+            className="mt-1.5 w-full border-0 border-b border-flap-dim/25 bg-transparent px-0.5 py-1.5 font-data text-sm text-flap outline-none focus:border-b-2 focus:border-flap"
           />
         </label>
 
         {error && (
-          <p role="alert" className="mb-3 text-xs text-fall">
+          <p role="alert" className="mb-3 text-xs text-falling">
             {error}
           </p>
         )}
-        {notice && <p className="mb-3 text-xs text-rise">{notice}</p>}
+        {notice && <p className="mb-3 text-xs text-rising">{notice}</p>}
 
         <button
           type="submit"
           disabled={submitting}
-          className="w-full rounded-md bg-signal px-3 py-2 text-sm font-semibold text-bg transition hover:bg-signal/90 disabled:opacity-50"
+          className="w-full rounded-sm bg-flap px-3 py-2 text-sm font-semibold text-casing transition hover:bg-flap/90 disabled:opacity-50"
         >
           {submitting ? "처리 중..." : mode === "signin" ? "로그인" : "가입하기"}
         </button>
@@ -105,7 +105,7 @@ export function AuthModal({ open, error, onClose, onSignIn, onSignUp }: AuthModa
         <button
           type="button"
           onClick={() => setMode(mode === "signin" ? "signup" : "signin")}
-          className="mt-3 w-full text-center text-xs text-text-dim underline decoration-hairline underline-offset-2 hover:text-signal"
+          className="mt-3 w-full text-center text-xs text-flap-dim underline decoration-flap-dim/30 underline-offset-2 hover:text-flap"
         >
           {mode === "signin" ? "계정이 없으신가요? 회원가입" : "이미 계정이 있으신가요? 로그인"}
         </button>

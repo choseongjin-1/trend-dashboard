@@ -1,57 +1,64 @@
 @import "tailwindcss";
 
 /*
- * SPIKE design tokens — a monitoring-console palette (warm near-black +
- * amber phosphor signal) rather than the generic near-black/acid-green
- * combination, paired with dual rise/fall tones for rank deltas. See
- * LOOP_LOG.md round 3 for the rationale.
+ * FLIP design tokens — a split-flap departures-board system, not a
+ * decorative "dark mode + one accent" palette. `casing`/`panel` are the
+ * board's physical housing (a specific material reference, not a default),
+ * `flap` is the printed-character cream used for ALL text and interactive/
+ * brand color (buttons, active tab, focus, wordmark) — `rising`/`falling`
+ * are reserved strictly for rank-delta status, never used decoratively
+ * elsewhere. See LOOP_LOG.md round 7 for the full design plan and the
+ * self-critique that led to this color-role split.
  */
 :root {
-  --bg: #0b0a08;
-  --surface: #16130e;
-  --surface-2: #1e1a12;
-  --signal: #f2a93b;
-  --signal-dim: #7a5420;
-  --rise: #4fd1ae;
-  --fall: #e85d5d;
-  --text: #f5efe4;
-  --text-dim: #9c9384;
-  --hairline: #2a2318;
+  --casing: #0e0e10;
+  --panel: #1c1b1e;
+  --flap: #f2ecdd;
+  --flap-dim: #8b887e;
+  --rising: #e8b23d;
+  --falling: #c4544a;
 }
 
 @theme inline {
-  --color-bg: var(--bg);
-  --color-surface: var(--surface);
-  --color-surface-2: var(--surface-2);
-  --color-signal: var(--signal);
-  --color-signal-dim: var(--signal-dim);
-  --color-rise: var(--rise);
-  --color-fall: var(--fall);
-  --color-text: var(--text);
-  --color-text-dim: var(--text-dim);
-  --color-hairline: var(--hairline);
+  --color-casing: var(--casing);
+  --color-panel: var(--panel);
+  --color-flap: var(--flap);
+  --color-flap-dim: var(--flap-dim);
+  --color-rising: var(--rising);
+  --color-falling: var(--falling);
   --font-display: var(--font-display);
   --font-body: var(--font-body);
   --font-data: var(--font-data);
 }
 
 body {
-  background: var(--bg);
-  color: var(--text);
+  background: var(--casing);
+  color: var(--flap);
   font-family: var(--font-body), "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
 }
 
-@keyframes spike-scroll {
-  from {
-    transform: translateX(0);
+/*
+ * Signature motion: rows arrive like split-flap characters settling,
+ * staggered per row (see page.tsx's `revision` key). This is the one
+ * deliberate animated moment in the app — everything else stays static.
+ */
+@keyframes flap-in {
+  0% {
+    transform: rotateX(-90deg);
+    opacity: 0;
   }
-  to {
-    transform: translateX(-700px);
+  60% {
+    opacity: 1;
+  }
+  100% {
+    transform: rotateX(0deg);
+    opacity: 1;
   }
 }
 
-.spike-line-track {
-  animation: spike-scroll 6s linear infinite;
+.flap-row {
+  animation: flap-in 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  transform-origin: top center;
 }
 
 @keyframes live-pulse {
@@ -69,7 +76,7 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .spike-line-track,
+  .flap-row,
   .live-dot {
     animation: none;
   }

@@ -30,8 +30,9 @@ function formatShort(iso: string) {
  * has a real y-axis (actual rank numbers, not just a shape), a hover
  * crosshair + tooltip, and a persistent label on the latest point.
  *
- * Single series, so no categorical palette: the line and grid follow the
- * app's existing signal/hairline tokens rather than introducing new hues.
+ * Single series, so no categorical palette: the line/dots use the `flap`
+ * (cream) ink color like a trace printed on the board, not the rising/
+ * falling status hues — those are reserved for delta badges elsewhere.
  */
 export function RankHistoryChart({ points }: RankHistoryChartProps) {
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
@@ -59,10 +60,14 @@ export function RankHistoryChart({ points }: RankHistoryChartProps) {
       point: p,
     }));
 
-    const yTicks = Array.from({ length: TICK_COUNT }, (_, i) => {
+    const rawTicks = Array.from({ length: TICK_COUNT }, (_, i) => {
       const rank = Math.round(paddedMin + (range * i) / (TICK_COUNT - 1));
       return { rank, y: rankToY(rank) };
     });
+    // A narrow rank range (e.g. a keyword that's stayed at #1 the whole
+    // time) can round two ticks to the same value — drop the duplicate
+    // rather than rendering/keying two identical labels.
+    const yTicks = rawTicks.filter((tick, i) => i === 0 || tick.rank !== rawTicks[i - 1].rank);
 
     return { coords, yTicks, innerH };
   }, [points]);
@@ -106,40 +111,41 @@ export function RankHistoryChart({ points }: RankHistoryChartProps) {
               x2={WIDTH - PAD_RIGHT}
               y1={tick.y}
               y2={tick.y}
-              stroke="var(--hairline)"
+              stroke="var(--flap-dim)"
               strokeWidth={1}
+              opacity={0.2}
             />
-            <text x={PAD_LEFT - 6} y={tick.y} textAnchor="end" dominantBaseline="middle" className="fill-text-dim font-data" fontSize={9}>
+            <text x={PAD_LEFT - 6} y={tick.y} textAnchor="end" dominantBaseline="middle" className="fill-flap-dim font-data" fontSize={9}>
               {tick.rank}
             </text>
           </g>
         ))}
 
-        <polyline points={linePath} fill="none" stroke="var(--signal)" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+        <polyline points={linePath} fill="none" stroke="var(--flap)" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
 
         {coords.map((c, i) => (
-          <circle key={i} cx={c.x} cy={c.y} r={i === coords.length - 1 ? 3.5 : 2.5} fill="var(--signal)" opacity={i === coords.length - 1 ? 1 : 0.7} />
+          <circle key={i} cx={c.x} cy={c.y} r={i === coords.length - 1 ? 3.5 : 2.5} fill="var(--flap)" opacity={i === coords.length - 1 ? 1 : 0.6} />
         ))}
 
-        <text x={last.x} y={last.y - 10} textAnchor="end" className="fill-text font-data" fontSize={11} fontWeight={600}>
+        <text x={last.x} y={last.y - 10} textAnchor="end" className="fill-flap font-data" fontSize={11} fontWeight={700}>
           {last.point.rank}위
         </text>
 
-        <text x={PAD_LEFT} y={HEIGHT - 6} className="fill-text-dim font-data" fontSize={9}>
+        <text x={PAD_LEFT} y={HEIGHT - 6} className="fill-flap-dim font-data" fontSize={9}>
           {formatShort(coords[0].point.fetchedAt)}
         </text>
-        <text x={WIDTH - PAD_RIGHT} y={HEIGHT - 6} textAnchor="end" className="fill-text-dim font-data" fontSize={9}>
+        <text x={WIDTH - PAD_RIGHT} y={HEIGHT - 6} textAnchor="end" className="fill-flap-dim font-data" fontSize={9}>
           {formatShort(last.point.fetchedAt)}
         </text>
 
         {hovered && (
-          <line x1={hovered.x} x2={hovered.x} y1={PAD_TOP} y2={HEIGHT - PAD_BOTTOM} stroke="var(--signal)" strokeWidth={1} strokeDasharray="2 3" opacity={0.6} />
+          <line x1={hovered.x} x2={hovered.x} y1={PAD_TOP} y2={HEIGHT - PAD_BOTTOM} stroke="var(--flap)" strokeWidth={1} strokeDasharray="2 3" opacity={0.5} />
         )}
       </svg>
 
       {hovered && (
         <div
-          className="pointer-events-none absolute -translate-x-1/2 -translate-y-full rounded border border-hairline bg-bg px-2 py-1 font-data text-[10px] text-text shadow-sm"
+          className="pointer-events-none absolute -translate-x-1/2 -translate-y-full rounded-sm border border-flap-dim/25 bg-casing px-2 py-1 font-data text-[10px] text-flap shadow-sm"
           style={{ left: `${(hovered.x / WIDTH) * 100}%`, top: `${(hovered.y / HEIGHT) * 100}%`, marginTop: -8 }}
         >
           {hovered.point.rank}위 · {formatShort(hovered.point.fetchedAt)}

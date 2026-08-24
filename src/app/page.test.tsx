@@ -119,7 +119,7 @@ describe("Home dashboard", () => {
 
     render(<Home />);
 
-    expect(await screen.findByText("아직 감지된 신호가 없습니다")).toBeInTheDocument();
+    expect(await screen.findByText("표시할 키워드가 없습니다")).toBeInTheDocument();
   });
 
   it("degrades gracefully when the history endpoint returns malformed data", async () => {
@@ -244,26 +244,17 @@ describe("Home dashboard", () => {
       "fetch",
       vi.fn((input: RequestInfo | URL) => {
         const url = typeof input === "string" ? input : input.toString();
-        if (url.includes("/api/trends/history")) {
-          const snapshots = [
-            {
-              id: "1",
-              source: "youtube",
+        if (url.includes("/api/trends/keyword-history")) {
+          return Promise.resolve(
+            jsonResponse({
+              keyword: "가을 캠핑 브이로그",
               region: "KR",
-              fetched_at: "2026-08-24T00:00:00.000Z",
-              items: [{ rank: 3, keyword: "가을 캠핑 브이로그", source: "youtube", score: 90000 }],
-              created_at: "2026-08-24T00:00:00.000Z",
-            },
-            {
-              id: "2",
-              source: "youtube",
-              region: "KR",
-              fetched_at: "2026-08-24T01:00:00.000Z",
-              items: [{ rank: 1, keyword: "가을 캠핑 브이로그", source: "youtube", score: 100000 }],
-              created_at: "2026-08-24T01:00:00.000Z",
-            },
-          ];
-          return Promise.resolve(jsonResponse(snapshots));
+              points: [
+                { rank: 3, fetchedAt: "2026-08-24T00:00:00.000Z" },
+                { rank: 1, fetchedAt: "2026-08-24T01:00:00.000Z" },
+              ],
+            }),
+          );
         }
         return baseFetchImplementation(input);
       }),
