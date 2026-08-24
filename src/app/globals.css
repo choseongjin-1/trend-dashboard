@@ -1,26 +1,76 @@
 @import "tailwindcss";
 
+/*
+ * SPIKE design tokens — a monitoring-console palette (warm near-black +
+ * amber phosphor signal) rather than the generic near-black/acid-green
+ * combination, paired with dual rise/fall tones for rank deltas. See
+ * LOOP_LOG.md round 3 for the rationale.
+ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --bg: #0b0a08;
+  --surface: #16130e;
+  --surface-2: #1e1a12;
+  --signal: #f2a93b;
+  --signal-dim: #7a5420;
+  --rise: #4fd1ae;
+  --fall: #e85d5d;
+  --text: #f5efe4;
+  --text-dim: #9c9384;
+  --hairline: #2a2318;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-signal: var(--signal);
+  --color-signal-dim: var(--signal-dim);
+  --color-rise: var(--rise);
+  --color-fall: var(--fall);
+  --color-text: var(--text);
+  --color-text-dim: var(--text-dim);
+  --color-hairline: var(--hairline);
+  --font-display: var(--font-display);
+  --font-body: var(--font-body);
+  --font-data: var(--font-data);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-body), "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+}
+
+@keyframes spike-scroll {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-700px);
+  }
+}
+
+.spike-line-track {
+  animation: spike-scroll 6s linear infinite;
+}
+
+@keyframes live-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.live-dot {
+  animation: live-pulse 2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spike-line-track,
+  .live-dot {
+    animation: none;
+  }
 }

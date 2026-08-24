@@ -1,7 +1,24 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import Home from "./page";
 import type { TrendsResponse } from "@/lib/trends/types";
+import { useAuth } from "@/lib/auth/useAuth";
+
+vi.mock("@/lib/auth/useAuth", () => ({
+  useAuth: vi.fn(),
+}));
+
+const mockUseAuth = vi.mocked(useAuth);
+
+const loggedOut = {
+  user: null,
+  loading: false,
+  error: null,
+  signUp: vi.fn(),
+  signIn: vi.fn(),
+  signOut: vi.fn(),
+};
 
 function jsonResponse(body: unknown, init?: Partial<{ ok: boolean; status: number }>): Response {
   return {
@@ -22,21 +39,26 @@ const mockTrends: TrendsResponse = {
   ],
 };
 
-function mockFetchImplementation(input: RequestInfo | URL): Promise<Response> {
+function trendsForRegion(region: string): TrendsResponse {
+  return { ...mockTrends, region };
+}
+
+function baseFetchImplementation(input: RequestInfo | URL): Promise<Response> {
   const url = typeof input === "string" ? input : input.toString();
   if (url.includes("/api/trends/history")) {
-    // Simulate the parallel backend endpoint not existing yet.
     return Promise.resolve(jsonResponse({ error: "not found" }, { ok: false, status: 404 }));
   }
-  if (url.includes("/api/trends")) {
-    return Promise.resolve(jsonResponse(mockTrends));
+  if (url.includes("/api/trends?region=")) {
+    const region = new URL(url, "http://localhost").searchParams.get("region") ?? "KR";
+    return Promise.resolve(jsonResponse(trendsForRegion(region)));
   }
   return Promise.reject(new Error(`Unexpected fetch: ${url}`));
 }
 
 describe("Home dashboard", () => {
   beforeEach(() => {
-    vi.stubGlobal("fetch", vi.fn(mockFetchImplementation));
+    mockUseAuth.mockReturnValue(loggedOut);
+    vi.stubGlobal("fetch", vi.fn(baseFetchImplementation));
   });
 
   afterEach(() => {
@@ -119,5 +141,90 @@ describe("Home dashboard", () => {
     });
     // Page must not crash or show an error because of the malformed history payload.
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("shows a sign-in prompt in the header when logged out", async () => {
+    render(<Home />);
+    await screen.findByText("가을 캠핑 브이로그");
+
+    expect(screen.getByRole("button", { name: "로그인" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "로그아웃" })).not.toBeInTheDocument();
+  });
+
+  it("shows the user's email and a logout control when logged in", async () => {
+    mockUseAuth.mockReturnValue({ ...loggedOut, user: { email: "creator@example.com" } });
+
+    render(<Home />);
+    await screen.findByText("가을 캠핑 브이로그");
+
+    expect(screen.getByText("creator@example.com")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "로그아웃" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "로그인" })).not.toBeInTheDocument();
+  });
+
+  it("re-fetches trends and history for the newly selected region on tab switch", async () => {
+    const fetchMock = vi.fn(baseFetchImplementation);
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    render(<Home />);
+    await screen.findByText("가을 캠핑 브이로그");
+    expect(fetchMock).toHaveBeenCalledWith("/api/trends?region=KR");
+
+    await user.click(screen.getByRole("tab", { name: /US/ }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/trends?region=US");
+    });
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([url]) => url === "/api/trends/history?region=US")).toBe(
+        true,
+      );
+    });
+  });
+
+  it("supports adding and removing a keyword from the watchlist when logged in", async () => {
+    mockUseAuth.mockReturnValue({ ...loggedOut, user: { email: "creator@example.com" } });
+
+    let watchlistState: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url.includes("/api/watchlist")) {
+          if (!init?.method || init.method === "GET") {
+            return Promise.resolve(jsonResponse({ keywords: watchlistState }));
+          }
+          const body = JSON.parse(init.body as string) as { keyword: string };
+          if (init.method === "POST") {
+            watchlistState = [...watchlistState, body.keyword];
+          } else if (init.method === "DELETE") {
+            watchlistState = watchlistState.filter((k) => k !== body.keyword);
+          }
+          return Promise.resolve(jsonResponse({ ok: true }));
+        }
+        return baseFetchImplementation(input);
+      }),
+    );
+    const user = userEvent.setup();
+
+    render(<Home />);
+    await screen.findByText("가을 캠핑 브이로그");
+
+    const addButtons = await screen.findAllByRole("button", { name: "워치리스트에 추가" });
+    await user.click(addButtons[0]);
+
+    const watchlistPanel = await screen.findByText("내 워치리스트");
+    const panelSection = watchlistPanel.closest("section")!;
+    await waitFor(() => {
+      expect(within(panelSection).getByText("가을 캠핑 브이로그")).toBeInTheDocument();
+    });
+
+    const removeButton = await screen.findByRole("button", { name: "워치리스트에서 제거" });
+    await user.click(removeButton);
+
+    await waitFor(() => {
+      expect(within(panelSection).queryByText("가을 캠핑 브이로그")).not.toBeInTheDocument();
+    });
   });
 });
