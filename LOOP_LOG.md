@@ -617,3 +617,258 @@ trend_snapshots.mocked does not exist` (select) — 둘 다 내부에서 catch�
 코드/SQL 작성 완료이나 라이브 검증 블록됨. 이 워크트리 권한으로 할 수 있는 작업은 모두 소진 —
 **중단(규칙 10)**. 오케스트레이터에게 (a) `supabase/schema.sql` 라이브 적용, (b) 적용 후
 `/api/trends` 캐시 히트 재검증 요청과 함께 보고.
+
+## 반복 3 — 프론트엔드 (계정/지역/워치리스트 + 비주얼 아이덴티티)
+
+### [목표]
+단일 페이지 데모를 "실제 제품처럼 보이는" 수준으로 끌어올린다: (1) Supabase Auth 기반
+회원가입/로그인/로그아웃, (2) KR/US/JP 지역 선택기, (3) 로그인 시 개인 워치리스트
+추가/제거, (4) `frontend-design` 스킬 가이드에 따른 실제 비주얼 아이덴티티(이름/컬러·타이포
+시스템/히어로), (5) 위 기능에 대한 자동화 테스트, (6) lint/test/build 통과, (7) dev 서버 +
+스크린샷 검증. `src/app/api/**`, `src/lib/supabase/server.ts`, `src/middleware.ts`,
+`supabase/schema.sql`은 이번 라운드 백엔드 세션 소유이므로 건드리지 않는다.
+
+### [성공 기준]
+과제 지시의 7개 기준(Auth UI, 지역 선택기, 워치리스트 UI, 비주얼/브랜드 패스, 테스트,
+lint/test/build 통과, dev+스크린샷 검증) 그대로 채택.
+
+### [계획]
+1. `git merge main` — 백엔드가 이미 병합한 `/api/trends/history`, `persist.ts` 등 최신 상태 확보
+2. `.env.local`을 워크트리로 복사 (값은 로그에 절대 출력하지 않음)
+3. `@supabase/ssr` 설치 후 `src/lib/supabase/browser.ts`(브라우저 클라이언트 팩토리, env 미설정
+   시 null 반환 — `server.ts`와 동일한 방어 패턴) 신설
+4. `src/lib/auth/useAuth.ts` — 세션 구독형 훅 (`user`/`loading`/`error`/`signUp`/`signIn`/`signOut`).
+   Supabase 미구성 시 즉시 로그아웃 상태로 안정화, 절대 throw하지 않음. 테스트에서
+   `vi.mock("@/lib/auth/useAuth")`로 쉽게 대체 가능하도록 로직을 컴포넌트에서 분리
+5. `src/lib/trends/regions.ts` — KR/US/JP 플레이스홀더 지역 목록 (백엔드의 `regions.ts`가 이
+   워크트리에 아직 없어 자체 정의; 백엔드 목록이 다르면 병합 시 조정 필요 — 아래 [개선/반복] 참고)
+6. `src/lib/watchlist.ts` — `/api/watchlist`(백엔드 미구현) 전용 방어적 클라이언트. `history.ts`와
+   동일한 원칙: 실패/스펙 불일치 시 `null`/`false` 반환, 절대 throw하지 않음. 가정 계약을 파일
+   상단에 명시(재조정 대상으로 기록)
+7. `frontend-design` 스킬 로드 후 브랜드 설계: 이름 **SPIKE**(순위가 "튀는" 순간을 가장 먼저
+   포착한다는 제품의 핵심 job과 직결), 다크 테마는 유지하되(이유는 아래 [비주얼 설계 근거])
+   웜톤 근접-블랙 + 앰버 시그널 색으로 팔레트 재정의, Gothic A1(디스플레이)+Noto Sans KR(본문)+
+   JetBrains Mono(데이터) 3-역할 타이포 페어링, 시그니처 요소로 히어로에 애니메이션 심전도/
+   지진계 스타일 트레이스(`SpikeLine`) 배치
+8. 컴포넌트 신설: `AuthHeader`(로그인/로그아웃 헤더 상태, presentational), `AuthModal`(가입/
+   로그인 폼), `RegionTabs`(지역 탭), `WatchlistPanel`(워치리스트 섹션), `SpikeLine`(시그니처)
+9. `page.tsx` 재작성 — 위 모든 요소 오케스트레이션, 지역 변경 시 `/api/trends`·`/api/trends/history`
+   재요청, 워치리스트 로그인 시에만 노출 + 실패 시 완전히 숨김, 기존 로딩/에러/빈 상태/mocked
+   배너 로직·문구 그대로 유지
+10. `layout.tsx`/`globals.css` — 폰트 로딩(next/font/google) 및 디자인 토큰(CSS 커스텀 프로퍼티
+    + Tailwind v4 `@theme inline` 매핑), 메타데이터(title/description) 갱신
+11. `page.test.tsx` 확장 — 로그아웃/로그인 헤더 상태, 지역 전환 시 재요청, 워치리스트 추가/제거
+    해피패스(모두 mocked API) 4개 테스트 추가, 기존 4개 테스트 회귀 없음 확인
+12. lint → test → build 순차 실행
+13. `npm run dev -- -p 3003` 기동 후 실 자격증명으로 curl 확인 + Playwright 스크린샷 (로그아웃
+    상태 + 지역 선택기), 서버 종료
+
+### [비주얼 설계 근거]
+스킬이 경계하는 "AI 생성 디자인 3대 기본값" 중 하나가 "근접-블랙 배경 + 단일 형광 그린/버밀리언
+포인트"다. 기존 대시보드(neutral-950 + emerald/red)가 정확히 이 패턴이었으므로, 다크 테마
+방향 자체는 유지하되(제품이 "모니터링 콘솔"이라는 컨셉과 잘 맞고, 이미 사용자에게 검증된
+방향이라 바꿀 이유가 약함) 포인트 컬러를 형광 그린이 아닌 **앰버(#F2A93B, CRT 인광/지진계
+기록지 레퍼런스)**로 바꾸고, rise/fall에 각각 별도 색(teal #4FD1AE / red #E85D5D)을 부여해
+포인트가 브랜드색과 상태색으로 분리되도록 했다. 타이포는 한국어 제품이라는 브리프의 실제
+제약에서 도출: Gothic A1(디스플레이, 굵은 웨이트로 브랜드 개성)+Noto Sans KR(본문 가독성)+
+JetBrains Mono(순위/점수/타임스탬프 — "계기판 판독값"처럼 읽히도록). 시그니처 요소인
+`SpikeLine`은 장식이 아니라 제품의 핵심 가치("스파이크의 순간을 가장 먼저 포착")를 시각적으로
+직역한 것.
+
+### [실행 + 관찰]
+
+**`git merge main`** (fast-forward, `ed0e4f9`까지) — 백엔드의 `/api/trends/history` 실제 라우트,
+`persist.ts`, `youtube.test.ts`, 오케스트레이터의 실 크리덴셜 검증 로그 포함하여 병합됨.
+
+**신규 파일**
+- `src/lib/supabase/browser.ts`, `src/lib/auth/useAuth.ts`
+- `src/lib/trends/regions.ts`, `src/lib/watchlist.ts`
+- `src/components/{AuthHeader,AuthModal,RegionTabs,WatchlistPanel,SpikeLine}.tsx`
+
+**수정 파일**
+- `src/app/page.tsx` (전면 재작성), `src/app/layout.tsx`(폰트/메타데이터), `src/app/globals.css`
+  (디자인 토큰), `src/app/page.test.tsx`(테스트 4개 추가), `package.json`(`@supabase/ssr`,
+  `@testing-library/user-event` 추가)
+
+**`npm run lint`** — 1차 실행에서 `useAuth.ts`의 `setLoading(false)`가
+`react-hooks/set-state-in-effect`에 걸림(이펙트 바디 내 동기 setState). `loading`의 초기값을
+`useState(() => getSupabaseBrowserClient() !== null)`로 lazy 초기화하여 이펙트 바디에서
+동기 setState를 제거하고 프로미스 콜백 내부에서만 setState하도록 수정 → 재실행 시 통과
+(에러/경고 없음, exit 0).
+
+**`npm run test`**
+```
+ Test Files  2 passed (2)
+      Tests  13 passed (13)
+```
+기존 8개(page 4 + youtube.test.ts 5, 반올림 아님 — 정확히는 page 4 + youtube 5 = 9였고 이번에
+page에 4개 추가해 13) 전부 회귀 없이 통과. 신규 4개: 로그아웃 헤더("로그인" 버튼), 로그인 헤더
+(이메일+"로그아웃"), 지역 탭 클릭 시 `/api/trends?region=US`·`/api/trends/history?region=US`
+재요청 확인, 워치리스트 추가(☆→★, 패널에 표시)/제거(패널에서 사라짐) 해피패스(POST/DELETE
+mock). 디버깅 과정에서 2개 실패를 잡아 수정: ①지역 재요청 테스트가 history 호출을 `waitFor`
+없이 단정해 타이밍상 실패 → 두 번째 `waitFor`로 분리, ②`toHaveBeenCalledWith`가 `fetch(url,
+{signal})`의 두 번째 인자까지 정확히 일치해야 해서 실패 → 호출 배열을 직접 검사하는 방식으로 변경.
+
+**`npm run build`**
+```
+✓ Compiled successfully
+  Running TypeScript ... Finished TypeScript
+Route (app): / (○), /_not-found (○), /api/trends (ƒ), /api/trends/history (ƒ)
+```
+`.env.local` 인식 확인(`- Environments: .env.local`).
+
+**`npm run dev -- -p 3003` + 실 자격증명 curl**
+```
+GET /                              → HTTP 200
+GET /api/trends?region=KR          → HTTP 200, mocked:false (실 YouTube 데이터, 예: BIGBANG/HYBE 등)
+GET /api/trends/history?region=KR  → HTTP 200, 스냅샷 1건 (id/source/region/fetched_at/items/
+                                      created_at 스키마가 반복 2에서 작성한 파서와 정확히 일치)
+```
+dev 서버 로그에 에러 없음.
+
+**Playwright 스크린샷** (`npx playwright screenshot`, chromium 캐시 기존 설치 재사용)
+로그아웃 상태로 `http://localhost:3003/` 캡처, 육안 확인 결과:
+- "SPIKE" 워드마크(앰버) + "로그인" 버튼이 헤더에 정상 표시
+- 히어로의 심전도/지진계 스타일 `SpikeLine` 트레이스가 앰버 색으로 정상 렌더링(정적 프레임이라
+  애니메이션 자체는 스크린샷상 확인 불가하나 형태와 색은 의도대로 그려짐)
+- "지금, 가장 먼저 뜨는 키워드" 헤드라인 + 설명 문구, 한글 타이포(Noto Sans KR 폴백 체인) 정상
+  렌더링 — 두부(tofu) 깨짐 없음
+- **지역 선택기(KR 대한민국 / US United States / JP 日本) 3개 탭이 모두 보이고, KR 탭에
+  앰버 밑줄로 활성 상태 표시**
+- 실제 YouTube 실급상승 키워드(BIGBANG, HYBE 등) 15개 이상이 순위/점수와 함께 모노스페이스로
+  렌더링
+- 로그아웃 상태이므로 워치리스트 섹션과 ☆ 토글 버튼은 의도대로 완전히 숨겨져 있음(크래시/빈
+  섹션 없음)
+- mocked 배너 없음(실 API 사용 중이므로 정상), 에러 배너 없음
+
+**dev 서버 종료**: `lsof -ti:3003 | xargs kill` 후 `lsof -iTCP:3003 -sTCP:LISTEN` 출력 없음 →
+정상 종료 확인.
+
+### [검증] — 성공 기준 대조
+1. Auth UI — `useAuth`+`AuthHeader`+`AuthModal`, 로그아웃/로그인 헤더 상태 모두 테스트(2개)와
+   스크린샷(로그아웃)으로 확인 → **충족**
+2. 지역 선택기 — `RegionTabs`(KR/US/JP), 전환 시 두 엔드포인트 모두 재요청 테스트로 확인,
+   스크린샷으로 3탭 노출 확인 → **충족**
+3. 워치리스트 UI — `/api/watchlist` 방어적 클라이언트(`watchlist.ts`) + 로그인시에만 노출 +
+   추가/제거 해피패스 테스트로 확인. 백엔드 라우트가 실제로 없는 현재 상태에서는 GET 실패 →
+   `watchlist === null` → 전체 UI 숨김(크래시 없음, 스크린샷의 로그아웃 상태로 간접 확인) →
+   **충족** (실 라우트 연동은 백엔드 병합 후 재검증 필요, 아래 기록)
+4. 비주얼/브랜드 패스 — `frontend-design` 스킬 로드 후 설계, SPIKE 네이밍/앰버 팔레트/3-역할
+   타이포/`SpikeLine` 시그니처, 근거를 위 [비주얼 설계 근거]에 기록, 스크린샷으로 실제 렌더링
+   확인 → **충족**
+5. 테스트 — 13개 전부 통과(신규 4개 포함) → **충족**
+6. lint/test/build — 전부 그린 (위 출력 참고) → **충족**
+7. dev 서버 + 스크린샷 — 실 자격증명으로 3라우트 curl 200 + 스크린샷으로 로그아웃 상태/지역
+   선택기 육안 확인 → **충족**
+
+### [개선/반복]
+1회 반복으로 7개 기준 모두 충족되어 추가 반복 불필요(규칙 9). 다만 정직하게 기록할 한계:
+- **워치리스트 실 연동 미검증**: `/api/watchlist`가 이 워크트리에 아직 없어 GET이 실패 →
+  UI가 숨겨진 상태로만 확인됨. 백엔드가 라우트를 병합하면 `src/lib/watchlist.ts` 상단에 적어둔
+  가정 계약(`{keywords: string[]}` GET, `{keyword}` body의 POST/DELETE)과 실제 계약을 대조해
+  반복 1의 `history.ts` 때와 같은 방식으로 재조정 필요.
+- **지역 목록 미조정**: `src/lib/trends/regions.ts`가 백엔드의 `regions.ts`(이 라운드에 작업
+  중이라고 명시됨) 없이 자체 정의됨. 백엔드 병합 후 코드/라벨이 다르면 병합해야 함.
+- 로그인/회원가입 실제 플로우(폼 제출)는 스크린샷으로 검증하지 않음 — 실 Supabase 프로젝트에
+  테스트 계정을 생성/이메일을 발송하는 부작용을 피하기 위해 의도적으로 생략, 대신 단위 테스트로
+  로직(성공 시 모달 닫힘/가입 알림, 실패 시 에러 문구) 검증.
+
+### [종료]
+7개 성공 기준 모두 실측 증거로 충족. `frontend-loop`에 커밋 진행.
+
+---
+
+## 통합 (merge, 라운드 3) — `backend-loop` ← `frontend-loop`
+
+> `VIBE-DEV-backend-wt`(브랜치 `backend-loop`, HEAD `a602512`)에서
+> `git merge frontend-loop`(`ec11491`) 실행. 백엔드는 스케줄 인제스천/다중 리전/워치리스트 기반,
+> 프론트엔드는 인증/지역 선택기/워치리스트 UI/SPIKE 브랜드를 각각 독립적으로 완료한 상태.
+
+### [충돌 및 해소]
+- `package.json` — git 자동 병합 성공. 결과에 양쪽 devDependency(`@supabase/ssr`은 두 트랙이 같은
+  버전을 넣어 완전히 일치, frontend의 `@testing-library/user-event` 포함) 모두 존재 확인.
+- `package-lock.json` — 지시대로 삭제 후 병합된 `package.json` 기준 `npm install` 재실행
+  (`added 1 package, audited 465 packages`, 취약점 0).
+- `src/lib/trends/regions.ts` — **진짜 충돌** (add/add): 양쪽이 동일 경로에 겹치지 않는 API로
+  독립 정의(백엔드: `SUPPORTED_REGIONS`/`SupportedRegion`/`normalizeRegion`/`isSupportedRegion`,
+  검증용 / 프론트엔드: `Region{code,label}`/`REGIONS`, 표시용). 코드 목록이 동일(KR/US/JP)해
+  의미 충돌은 아니었음. 하나의 파일로 합침: 백엔드의 검증 함수를 그대로 두고, `REGIONS`를
+  `SUPPORTED_REGIONS.map(...)`으로 라벨맵과 함께 파생시켜 두 API를 모두 export. `DEFAULT_REGION`은
+  이름이 같고 값도 동일("KR")해 타입만 `SupportedRegion`으로 통일. 병합 후
+  `grep -rn '@/lib/trends/regions'` 로 6개 소비처(`page.tsx`, 3개 API 라우트, cron 라우트,
+  `RegionTabs.tsx`, `regions.test.ts`) 전부 재확인 — import된 이름(`REGIONS`, `DEFAULT_REGION`,
+  `normalizeRegion`, `SUPPORTED_REGIONS`, `Region` 타입, `isSupportedRegion`) 전부 병합된 파일에
+  존재해 아무 소비처도 import를 바꿀 필요 없었음.
+- `LOOP_LOG.md` — 이전 병합 때와 동일한 content 충돌(양쪽이 독립적으로 이어씀). `git show :2:`/`:3:`로
+  직접 추출해 공통 서두(1~444행, 두 버전 동일 확인) + 백엔드 라운드 3 섹션 + 프론트엔드 라운드 3
+  섹션 순서로 재구성.
+- 그 외 파일(`page.tsx`, `page.test.tsx`, `globals.css`, `layout.tsx`, 신규 컴포넌트/lib 파일들)은
+  서로 다른 파일/영역이라 자동 병합됨.
+
+### [병합 후 발견된 실제 버그 — 수정]
+`npm run build`에서 타입 에러 발생:
+```
+src/app/page.tsx(120,57): error TS2322:
+  Type 'Dispatch<SetStateAction<"KR" | "US" | "JP">>' is not assignable to type '(code: string) => void'.
+```
+원인: 병합된 `regions.ts`의 `DEFAULT_REGION`이 (백엔드 쪽 정의를 따라) `SupportedRegion`으로
+좁게 타입되면서, `useState(DEFAULT_REGION)`으로 추론된 `region` 상태가 `"KR"|"US"|"JP"`로 좁아짐.
+반면 `RegionTabs`의 `onChange`는 (frontend 원래 설계대로) `(code: string) => void`라 더 넓은
+타입을 받으므로 `setRegion`을 그대로 넘길 수 없게 됨 — 두 트랙 모두 개별적으로는 타입이 맞았지만
+병합된 `regions.ts`의 좁은 `DEFAULT_REGION` 타입이 그 사이 접점에서 불일치를 드러낸 것.
+**수정**: `src/app/page.tsx`에서 `useState(DEFAULT_REGION)` → `useState<string>(DEFAULT_REGION)`
+1줄만 변경 — `RegionTabs`/`regions.ts` 어느 쪽 계약도 바꾸지 않는 최소 수정. 재빌드 통과 확인.
+
+### [검증 — 통합 결과 실측]
+
+**`npm run lint`** → 빈 출력, exit 0 (타입 수정 전/후 모두 확인)
+
+**`npm run test`**
+```
+Test Files  4 passed (4)
+     Tests  25 passed (25)
+```
+25개 = youtube.test.ts(5, 두 트랙이 공유하는 동일 파일이라 중복 집계 안 됨) + regions.test.ts(7,
+백엔드) + persist.test.ts(5, 백엔드) + page.test.tsx(8, frontend가 4→8로 확장한 최신 버전).
+오케스트레이터가 예상한 "~34(21+13)"는 두 트랙의 독립 합계를 그대로 더한 값이라 공유 파일
+(youtube.test.ts 5개, 양쪽 다 f71ce22에서 유래해 동일)이 이중 계산된 것 — 실제 병합 결과는 25개가
+맞음(19번째 반복까지 두 브랜치가 공유한 공통 조상 때문에 발생하는 정상적인 차이, 테스트 누락 아님).
+
+**`npm run build`** (타입 수정 후)
+```
+▲ Next.js 16.3.2 (Turbopack)
+✓ Compiled successfully in 488ms
+  Finished TypeScript in 1055ms
+
+Route (app)
+┌ ○ /
+├ ○ /_not-found
+├ ƒ /api/cron/refresh-trends
+├ ƒ /api/trends
+├ ƒ /api/trends/history
+└ ƒ /api/watchlist
+
+ƒ Proxy (Middleware)
+```
+
+**`npm run dev -- -p 3001` + curl (실 크리덴셜, 5개 라우트 전부)**
+```
+GET  /                                              → HTTP 200
+GET  /api/trends?region=KR                          → HTTP 200, mocked:false, 실 데이터("BIGBANG" 등)
+GET  /api/trends/history?region=KR                  → HTTP 200, []
+POST /api/cron/refresh-trends (no secret)            → HTTP 401
+POST /api/cron/refresh-trends (correct Bearer)       → HTTP 200
+GET  /api/watchlist (세션 없음)                        → HTTP 401
+```
+dev 로그 전수 확인 — `saveTrendSnapshot`/`getRecentTrendSnapshots`의 `mocked` 컬럼 부재 에러(라운드
+3에서 이미 문서화한 동일 블로커)를 제외하면 예상 밖 에러 없음. 모든 라우트에 `proxy.ts: Nms` 타이밍이
+찍혀 세션 갱신 proxy가 정상 동작 중임을 재확인.
+`lsof -ti:3001 | xargs kill` 후 `lsof -iTCP:3001 -sTCP:LISTEN` 출력 없음 → 정상 종료.
+
+### [결론]
+`backend-loop`와 `frontend-loop` 라운드 3을 통합한 결과 lint/test(25개)/build/dev 5라우트 curl 모두
+그린. 병합 중 발견된 `page.tsx`의 진짜 타입 버그 1건을 최소 수정으로 해결. `regions.ts`의 add/add
+충돌은 두 API를 모두 보존하는 단일 파일로 재조정, 기존 소비처 import 변경 없음.
+**여전히 미해결(범위 밖, 이전 라운드부터 이어짐)**: `supabase/schema.sql`의 `mocked` 컬럼/`watchlist`
+테이블이 라이브 프로젝트에 미적용 — 라이브 DB 접근 권한이 있는 세션의 1회 실행 필요.
+`backend-loop`에 머지 커밋 진행.
