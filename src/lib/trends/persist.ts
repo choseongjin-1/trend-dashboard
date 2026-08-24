@@ -109,6 +109,37 @@ export async function getFreshTrendSnapshot(
   return isSnapshotFresh(latest.fetched_at, maxAgeMs) ? latest : null;
 }
 
+export interface KeywordHistoryPoint {
+  fetchedAt: string;
+  rank: number;
+  score: number;
+}
+
+/**
+ * Pure extraction, factored out for unit testing without a Supabase
+ * client: pulls one keyword's rank/score out of each snapshot's full item
+ * list, oldest first. Snapshots that don't contain the keyword are simply
+ * skipped (that keyword wasn't in that snapshot's ranking) rather than
+ * treated as an error.
+ *
+ * This exists as its own step — rather than the keyword-history route
+ * being a thin filter over /api/trends/history's full snapshot rows — so
+ * that route can fetch snapshots once and hand back a payload containing
+ * only this one keyword's points, not every keyword's full item list.
+ */
+export function extractKeywordHistory(
+  snapshots: TrendSnapshotRow[],
+  keyword: string
+): KeywordHistoryPoint[] {
+  return snapshots
+    .map((snapshot): KeywordHistoryPoint | null => {
+      const item = snapshot.items.find((i) => i.keyword === keyword);
+      return item ? { fetchedAt: snapshot.fetched_at, rank: item.rank, score: item.score } : null;
+    })
+    .filter((point): point is KeywordHistoryPoint => point !== null)
+    .sort((a, b) => a.fetchedAt.localeCompare(b.fetchedAt));
+}
+
 /** Converts a stored snapshot row back into the public TrendsResponse shape. */
 export function snapshotRowToResponse(row: TrendSnapshotRow): TrendsResponse {
   return {

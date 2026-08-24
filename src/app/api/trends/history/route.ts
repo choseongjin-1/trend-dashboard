@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getRecentTrendSnapshots } from "@/lib/trends/persist";
 import { normalizeRegion } from "@/lib/trends/regions";
+import { checkRateLimit, getClientIdentifier, rateLimitResponse } from "@/lib/rate-limit";
+
+// Same budget as /api/trends and tracked independently (own route key) —
+// the two are usually called together by one page load, but a shared
+// bucket would let one endpoint's traffic starve the other's quota.
+const RATE_LIMIT_PER_MINUTE = 30;
 
 /**
  * GET /api/trends/history?region=KR&limit=20
@@ -12,6 +18,11 @@ import { normalizeRegion } from "@/lib/trends/regions";
  * of surfacing an error to the client.
  */
 export async function GET(req: NextRequest) {
+  const rateLimit = await checkRateLimit("trends-history", getClientIdentifier(req), RATE_LIMIT_PER_MINUTE);
+  if (!rateLimit.allowed) {
+    return rateLimitResponse(rateLimit);
+  }
+
   const region = normalizeRegion(req.nextUrl.searchParams.get("region"));
   const limitParam = req.nextUrl.searchParams.get("limit");
   const limit = limitParam ? Number(limitParam) : 20;

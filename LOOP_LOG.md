@@ -1334,3 +1334,135 @@ dev 로그 전수 확인 — 예상 밖 에러/회귀 없음(기존에 문서화
 ### [결론]
 `bfff14d` 반영 후 lint/test(31개, 불변)/build/dev 6요청 curl 전부 그린 — 회귀 없음.
 `backend-loop`에 머지 커밋 진행 후 `main`으로 병합 예정.
+
+---
+
+## 반복 — 백엔드 (rate limiting + 키워드별 랭킹 히스토리)
+
+> `git merge main` → 이미 최신(변경 없음). 결제(Stripe)는 계정 크리덴셜 부재로 이번 라운드
+> 범위 밖. Redis/Upstash 같은 새 외부 크리덴셜 없이 Supabase만으로 두 기능 구현.
+
+### [목표]
+1. `/api/trends`, `/api/trends/history` 공개 라우트에 남용 방지(rate limit) 추가 — Supabase
+   기반, 미설정/실패 시 항상 허용(그레이스풀 디그레이드)
+2. 키워드별 랭킹 히스토리를 위한 데이터 접근 계층 — 프론트엔드가 스파크라인보다 큰 상세 뷰를
+   만들 수 있도록, 전체 스냅샷이 아닌 해당 키워드만의 작은 페이로드 제공
+3. 실 Supabase로 두 기능 동작 검증(가능한 범위), lint/test/build 클린
+
+### [계획]
+1. **Rate limit 설계 결정**: Redis 없음 → Postgres 고정 윈도우(fixed window) 카운터 테이블 +
+   원자적 증가 RPC 함수. 슬라이딩 윈도우 대신 고정 윈도우를 선택한 이유: 구현이 훨씬 단순(키당
+   분당 1행, RPC 1회 호출)하고, 이 프로젝트 규모(공개 조회 라우트 남용 방지, 과금 단위 아님)에는
+   윈도우 경계에서 최대 2배까지 허용되는 느슨함이 실질적 문제가 안 됨 — 트레이드오프를
+   마이그레이션 파일 상단에 명시.
+   - 한도: 분당 30회/IP. 근거: 정상 사용(페이지 로드 1회 + 가끔 새로고침/지역 전환)은 분당
+     10회 미만이 일반적 — 30이면 정상 사용에 넉넉한 여유를 주면서 스크립트/봇성 남용은 확실히
+     캡됨.
+   - 식별자: `x-forwarded-for`(Vercel 등 프록시 표준) → `x-real-ip` 폴백 → 없으면 공유
+     "unknown" 버킷(로컬/비프록시 환경의 알려진 한계로 문서화).
+   - 라우트별 독립 버킷(`trends:`, `trends-history:` 접두사) — 두 라우트가 보통 같이 호출되지만
+     공유 버킷으로 묶으면 한쪽이 다른 쪽 quota를 잠식할 수 있어 분리.
+2. `supabase/migrations/0003_rate_limiting.sql` 신설 — `rate_limit_counters` 테이블 +
+   `increment_rate_limit(key, window_start)` RPC(원자적 upsert-increment, 1% 확률로 1시간
+   이상 지난 행 정리해 별도 정리 잡 없이 테이블 크기 관리)
+3. `src/lib/rate-limit.ts` 신설 — `checkRateLimit(routeKey, identifier, limit)`,
+   `getClientIdentifier(req)`, `rateLimitResponse(result)`(429 + Retry-After/X-RateLimit-* 헤더).
+   Supabase 미설정/RPC 실패/예외 모두 "허용"으로 폴백 — 나머지 저장 계층과 동일한 규율
+4. `/api/trends`, `/api/trends/history`에 라우트 진입 시점에 `checkRateLimit` 적용, 초과 시
+   `rateLimitResponse` 반환
+5. **키워드 히스토리 설계 결정**: `/api/trends/history`를 그대로 재사용하지 않고 전용 라우트
+   신설. 이유: 그 라우트는 스냅샷당 전체 아이템 리스트(보통 20개 키워드)를 반환하는데, 단일
+   키워드 상세 뷰에는 그중 1개만 필요 — 나머지 19개를 매 요청마다 브라우저로 보내는 건 낭비.
+   DB 함수(RPC)로 서버 사이드 필터링하는 방안도 검토했으나, `getRecentTrendSnapshots`가 이미
+   존재하고 라이브 적용되어 있어(추가 마이그레이션 승인 대기 없이 즉시 동작) 그걸 재사용해
+   Node 서버에서 필터링하는 쪽을 선택 — Supabase→서버 구간은 서버 간 통신이라 크지 않고(최대
+   50개 스냅샷 × 20개 아이템 정도), 브라우저로 나가는 응답만 작으면 목표(작은 클라이언트
+   페이로드) 달성. RPC 방식은 더 효율적이지만 또 하나의 라이브 미적용 마이그레이션을 만드는
+   대가가 있어 이번엔 보류(주석으로 향후 최적화 옵션으로 남김).
+6. `src/lib/trends/persist.ts`에 `extractKeywordHistory(snapshots, keyword)` 순수 함수 추가
+   (스냅샷 배열에서 해당 키워드의 rank/score만 뽑아 시간순 정렬, 키워드 없는 스냅샷은 에러
+   없이 스킵)
+7. `src/app/api/trends/keyword-history/route.ts` 신설 —
+   `GET ?keyword=X&region=KR&limit=50` → `{keyword, region, points}`. `keyword` 없으면 400
+   (다른 곳은 전부 200-그레이스풀이지만, 여기는 watchlist POST의 필수 필드 누락과 동일하게
+   "진짜 잘못된 요청"이라 400이 일관적). rate limit도 동일하게 적용(`trends-keyword-history:`)
+8. 유닛 테스트: `rate-limit.test.ts`(허용/거부/경계값/RPC 실패시 허용/식별자 추출 10개),
+   `persist.test.ts`에 `extractKeywordHistory` 4개 추가
+9. `npm run lint/test/build` → dev 서버 + 실 크리덴셜로 curl 검증 (마이그레이션 미적용 상태에서
+   그레이스풀 디그레이드 실측까지 포함)
+
+### [실행 + 관찰]
+
+**신규 파일**
+- `supabase/migrations/0003_rate_limiting.sql`
+- `src/lib/rate-limit.ts`, `src/lib/rate-limit.test.ts`
+- `src/app/api/trends/keyword-history/route.ts`
+
+**수정 파일**
+- `src/app/api/trends/route.ts`, `src/app/api/trends/history/route.ts` — rate limit 적용
+- `src/lib/trends/persist.ts` — `extractKeywordHistory` 추가
+- `src/lib/trends/persist.test.ts` — 관련 테스트 추가
+- `supabase/migrations/APPLIED.md` — `0003` pending으로 등재
+
+**`npm run test`**
+```
+Test Files  6 passed (6)
+     Tests  45 passed (45)
+```
+신규 14개: rate-limit 10개(Supabase 미설정 시 허용/한도 이내 허용+잔여량/한도 초과 거부/경계값
+정확히 한도일 때 허용/RPC 에러 시 허용 폴백/RPC 예외 시 허용 폴백/라우트별 독립 버킷/식별자
+추출 3종) + extractKeywordHistory 4개(정상 추출+정렬/키워드 없는 스냅샷 스킵/전체 미매치 시
+빈 배열/빈 입력)
+
+**`npm run lint`** → 빈 출력, exit 0
+**`npm run build`** → 클린, 라우트 목록에 `/api/trends/keyword-history` 추가 확인:
+```
+Route (app)
+┌ ○ /
+├ ○ /_not-found
+├ ƒ /api/cron/refresh-trends
+├ ƒ /api/trends
+├ ƒ /api/trends/history
+├ ƒ /api/trends/keyword-history
+├ ƒ /api/watchlist
+└ ƒ /auth/callback
+```
+
+**dev 서버(`:3001`, 실 크리덴셜) 실측**
+```
+GET /api/trends/keyword-history (keyword 없음)              → HTTP 400
+GET /api/trends/keyword-history?keyword=BIGBANG&region=KR   → HTTP 200,
+  {"keyword":"BIGBANG","region":"KR","points":[...17개 포인트, fetchedAt 오름차순...]}
+  (라운드 3부터 지금까지 쌓인 실제 스냅샷들에서 뽑아낸 진짜 데이터)
+
+/api/trends?region=KR 연속 5회 호출 → 전부 HTTP 200 (429 없음)
+```
+rate limit이 실제로는 아직 "허용"으로 폴백되는 이유를 dev 로그로 실측 확인 — 마이그레이션
+`0003`이 아직 라이브에 미적용되어 RPC 함수가 없음:
+```
+checkRateLimit: rpc failed {
+  message: 'Could not find the function public.increment_rate_limit(p_key, p_window_start) in the schema cache'
+}
+```
+이 에러가 반복 관측되면서도 모든 요청이 200을 유지 — "절대 실사용을 막지 않는다"는 설계
+원칙이 실제 스키마 미적용 상황에서 정확히 의도대로 동작함을 실측으로 확인(라운드 3의
+`mocked` 컬럼 부재 때와 동일한 패턴). `/`, `/api/watchlist`(401), `/api/trends/history` 모두
+회귀 없이 정상. 서버 종료 후 포트 확인 → 정상 종료.
+
+### [검증] — 성공 기준 대조
+1. `/api/trends`, `/api/trends/history` rate limit 적용 + 429 응답 로직 구현, 유닛 테스트로
+   허용/거부/경계값 모두 커버, Supabase 미설정/RPC 실패 시 항상 허용 실측 확인 → **코드/로직
+   충족. "실 Supabase로 429 트리거" 자체는 미검증** — `0003` 마이그레이션이 아직 라이브에
+   없어 RPC가 실행되지 않기 때문(규칙 10과 동일한 패턴, 이전 라운드들과 같은 이유)
+2. 키워드 히스토리 데이터 접근 계층(`extractKeywordHistory` + 전용 라우트) → **충족**, 실
+   Supabase 데이터로 실측 확인(BIGBANG 17개 포인트 실제 반환)
+3. lint/test(45개)/build 클린 → **충족**
+
+### [개선/반복]
+1회 반복으로 코드 가능한 부분 전부 완료. 성공 기준 1의 "실 429 트리거 확인"만 `0003`
+마이그레이션의 라이브 적용을 필요로 함 — 규칙 10, 이 세션 권한 밖.
+
+### [종료/중단]
+`0003_rate_limiting.sql` 라이브 적용 필요(SQL Editor, 이전 두 번과 동일한 절차) — 적용 후
+동일 IP로 31회 이상 빠르게 호출해 31번째부터 `429` + `Retry-After` 헤더가 실제로 나오는지
+재검증 필요. 그 외 전부 완료 — **중단(규칙 10, 라이브 적용 대기)**.

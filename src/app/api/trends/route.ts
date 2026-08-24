@@ -4,6 +4,13 @@ import { getMockTrends } from "@/lib/trends/mock";
 import { getFreshTrendSnapshot, saveTrendSnapshot, snapshotRowToResponse } from "@/lib/trends/persist";
 import { normalizeRegion } from "@/lib/trends/regions";
 import { TrendsResponse } from "@/lib/trends/types";
+import { checkRateLimit, getClientIdentifier, rateLimitResponse } from "@/lib/rate-limit";
+
+// A normal session (page load + a manual refresh or two, or switching
+// regions a few times) is well under 10 requests/minute; 30 leaves
+// generous headroom for that while still capping scripted/bot abuse of a
+// public, unauthenticated read endpoint.
+const RATE_LIMIT_PER_MINUTE = 30;
 
 /**
  * Fires the snapshot persistence off without ever letting it affect the
@@ -18,6 +25,11 @@ function persistInBackground(trends: TrendsResponse) {
 }
 
 export async function GET(req: NextRequest) {
+  const rateLimit = await checkRateLimit("trends", getClientIdentifier(req), RATE_LIMIT_PER_MINUTE);
+  if (!rateLimit.allowed) {
+    return rateLimitResponse(rateLimit);
+  }
+
   const region = normalizeRegion(req.nextUrl.searchParams.get("region"));
 
   // DB-first: serve a recent snapshot straight from Supabase when one
