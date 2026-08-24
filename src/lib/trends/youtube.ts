@@ -2,7 +2,7 @@ import { TrendItem, TrendsResponse } from "./types";
 
 const YOUTUBE_API_URL = "https://www.googleapis.com/youtube/v3/videos";
 
-interface YouTubeVideoItem {
+export interface YouTubeVideoItem {
   id: string;
   snippet: {
     title: string;
@@ -11,6 +11,42 @@ interface YouTubeVideoItem {
   statistics: {
     viewCount?: string;
   };
+}
+
+/**
+ * Pure aggregation/ranking step: turns raw YouTube video items into a
+ * ranked TrendItem[] by summing view counts per keyword/tag.
+ *
+ * Deliberately has no network/env dependency so it can be unit tested
+ * with plain fixture data.
+ */
+export function aggregateTrendItems(
+  videos: YouTubeVideoItem[],
+  limit = 20
+): TrendItem[] {
+  const keywordScores = new Map<string, number>();
+
+  for (const video of videos) {
+    const views = Number(video.statistics.viewCount ?? 0);
+    const tags = video.snippet.tags?.length
+      ? video.snippet.tags
+      : [video.snippet.title];
+    for (const tag of tags) {
+      const key = tag.trim();
+      if (!key) continue;
+      keywordScores.set(key, (keywordScores.get(key) ?? 0) + views);
+    }
+  }
+
+  return Array.from(keywordScores.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit)
+    .map(([keyword, score], i) => ({
+      rank: i + 1,
+      keyword,
+      source: "youtube",
+      score,
+    }));
 }
 
 export async function fetchYoutubeTrends(region: string): Promise<TrendsResponse> {
@@ -34,26 +70,7 @@ export async function fetchYoutubeTrends(region: string): Promise<TrendsResponse
 
   const data = (await res.json()) as { items: YouTubeVideoItem[] };
 
-  const keywordScores = new Map<string, number>();
-  for (const video of data.items) {
-    const views = Number(video.statistics.viewCount ?? 0);
-    const tags = video.snippet.tags?.length ? video.snippet.tags : [video.snippet.title];
-    for (const tag of tags) {
-      const key = tag.trim();
-      if (!key) continue;
-      keywordScores.set(key, (keywordScores.get(key) ?? 0) + views);
-    }
-  }
-
-  const items: TrendItem[] = Array.from(keywordScores.entries())
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 20)
-    .map(([keyword, score], i) => ({
-      rank: i + 1,
-      keyword,
-      source: "youtube",
-      score,
-    }));
+  const items = aggregateTrendItems(data.items);
 
   return {
     source: "youtube",
