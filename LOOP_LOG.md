@@ -1046,3 +1046,116 @@ watchlist table exists, row count: 0
 ### [종료]
 5개 기준 모두 실측 증거로 충족, 1회 반복으로 종료. 이전 두 라운드에 걸쳐 있던 미해결 항목(A)이
 완전히 해소됨 — 더 이상 남은 블로커 없음.
+
+---
+
+## 반복 — 백엔드 (auth 확인 콜백)
+
+> 프로덕션 버그: 사용자가 가입 후 이메일 확인 링크를 클릭하면 빈 페이지가 뜸. Supabase Site URL
+> 설정 문제(사용자가 대시보드에서 직접 수정 중, 범위 밖)와는 별개로, 확인 리다이렉트를 받아
+> 세션을 완성할 라우트가 앱에 아예 없다는 진짜 코드 공백. `git merge main` 시도 → 이미 동일
+> 커밋(`14e8155`)이라 변경 없음(sync 불필요, 이미 최신).
+
+### [목표]
+1. Supabase 확인 리다이렉트를 받아 code/token을 세션으로 교환하고 `/`로 보내는 라우트 추가
+2. `useAuth.ts`의 `signUp()`이 `emailRedirectTo`를 명시적으로 전달해 대시보드 Site URL 설정과
+   무관하게 항상 우리 콜백을 가리키게 함
+3. 교환 실패(만료/재사용된 링크 등)도 빈 페이지 대신 정상적으로 리다이렉트 처리
+4. 실제 이메일 링크 클릭은 불가하므로 검증 가능한 범위 내에서 최대한 검증(유닛 테스트 +
+   가짜 code로 curl)
+5. lint/test/build 클린
+
+### [계획]
+1. **가정하지 않고 실제 확인**: `node_modules/@supabase/ssr` 버전(0.12.4)의 소스를 직접 읽어
+   confirm 방식 판별 — `GoTrueClient.js`의 기본 `flowType`은 `'implicit'`이지만,
+   `@supabase/ssr`의 `createBrowserClient.js`/`createServerClient.js`는 둘 다 옵션에서
+   `flowType: "pkce"`로 명시적으로 덮어씀(grep으로 두 파일 모두 확인) — 이 프로젝트의
+   `browser.ts`/`server.ts`가 그 옵션을 override하지 않으므로 실제로는 PKCE 플로우.
+   즉 확인 링크는 `token_hash`+`type`이 아니라 `?code=`를 담고 오며, 서버에서
+   `exchangeCodeForSession(code)`로 교환해야 함(Next.js App Router + `@supabase/ssr`의
+   표준 콜백 라우트 패턴).
+2. `src/app/auth/callback/route.ts` 신설 — `code` 파라미터를 세션 인지형 클라이언트
+   (`getSupabaseRouteHandlerClient`, 라운드 3에서 이미 만들어둔 것)로 교환, 성공 시 `next`
+   쿼리 파라미터(기본 `/`)로 리다이렉트. `next`는 동일 출처 상대경로만 허용(오픈 리다이렉트
+   방지) — 코드/클라이언트 부재/교환 실패 어느 경우든 예외 없이 `/?auth_error=1`로 리다이렉트
+3. `useAuth.ts`의 `signUp()`에 `options: { emailRedirectTo: `${window.location.origin}/auth/callback` }`
+   추가 — 클라이언트 훅이라 `window` 사용 안전(파일 최상단 `"use client"`)
+4. `src/app/auth/callback/route.test.ts` 신설 — `getSupabaseRouteHandlerClient`를 모킹해
+   성공/실패/코드없음/미설정/오픈리다이렉트 시도 5+1가지 케이스를 리다이렉트 URL로 검증
+5. `npm run lint/test/build` → dev 서버에서 실 크리덴셜로 가짜 code를 포함한 실제 curl 검증
+   (교환은 실제로 Supabase에 도달하므로 진짜 실패 응답을 관측 가능)
+
+### [실행 + 관찰]
+
+**신규 파일**
+- `src/app/auth/callback/route.ts` — `GET` 핸들러, PKCE 코드 교환 + 안전한 리다이렉트
+- `src/app/auth/callback/route.test.ts` — 6개 유닛 테스트
+
+**수정 파일**
+- `src/lib/auth/useAuth.ts` — `signUp()`에 `emailRedirectTo` 추가
+
+**`npm run test`**
+```
+Test Files  5 passed (5)
+     Tests  31 passed (31)
+```
+신규 6개: 유효 code 교환 성공 → `/`로 리다이렉트 / `?next=/settings` 지정 시 그 경로로 리다이렉트 /
+타 출처 `next=https://evil.example/` 시도 시 무시하고 `/`로 폴백(오픈 리다이렉트 방어 확인) /
+교환 실패(만료·재사용 code) 시 `/?auth_error=1` / code 파라미터 자체가 없으면 Supabase 호출 없이
+바로 `/?auth_error=1` / Supabase 미설정(`getSupabaseRouteHandlerClient()` null) 시에도 예외 없이
+`/?auth_error=1`.
+
+**`npm run lint`** → 빈 출력, exit 0
+**`npm run build`** → 컴파일/타입체크 통과, 라우트 목록에 `/auth/callback` 추가 확인:
+```
+Route (app)
+┌ ○ /
+├ ○ /_not-found
+├ ƒ /api/cron/refresh-trends
+├ ƒ /api/trends
+├ ƒ /api/trends/history
+├ ƒ /api/watchlist
+└ ƒ /auth/callback
+```
+
+**dev 서버(`:3001`, 실 크리덴셜) + curl 실측**
+```
+GET /auth/callback (code 없음)                              → HTTP 307, Location: /?auth_error=1
+GET /auth/callback?code=totally-fake-code-12345               → HTTP 307, Location: /?auth_error=1
+GET /auth/callback?code=fake&next=https://evil.example/       → HTTP 307, Location: /?auth_error=1
+```
+dev 로그에 실제로 흥미로운 실측 증거가 남음 — 가짜 code로도 라우트가 정말 Supabase의
+`exchangeCodeForSession`을 호출했고, 실 Supabase가 다음 에러로 응답함:
+```
+Error [AuthPKCECodeVerifierMissingError]: PKCE code verifier not found in storage. ...
+  __isAuthError: true, status: 400, code: 'pkce_code_verifier_not_found'
+```
+이 에러 자체가 계획 1단계에서 소스 코드로 추론한 "PKCE 플로우"라는 판단을 실측으로 재확인시켜줌
+(에러 메시지가 명시적으로 "PKCE code verifier"를 언급). 동시에 실패 시 예외를 던지지 않고
+`error` 객체로 안전하게 받아 로깅 후 리다이렉트하는 처리가 실제 Supabase 응답을 상대로도
+정확히 의도대로 동작함을 확인. 서버 종료 후 포트 확인 → 정상 종료.
+
+### [검증] — 성공 기준 대조
+1. 콜백 라우트 신설 + code 교환 + `/`(또는 `next`)로 리다이렉트 → **충족** (빌드 라우트 목록,
+   유닛 테스트, curl 모두로 확인)
+2. `signUp()`에 `emailRedirectTo` 명시 → **충족** (코드 변경, dashboard Site URL 설정과 무관하게
+   동작)
+3. 교환 실패 시에도 항상 리다이렉트(빈 페이지/미처리 에러 없음) → **충족** (실 Supabase 에러
+   응답으로 실측, 유닛 테스트로도 커버)
+4. 실 이메일 링크 클릭 없이 검증 가능한 범위 최대한 검증 → **충족** — 유닛 테스트 6개 +
+   실 Supabase를 상대로 한 가짜 code curl 3종. **다만 진짜 유효한 code로 성공 경로 전체(세션
+   쿠키 실제 발급, 로그인 상태로 `/` 렌더링)는 검증 안 됨** — 이건 실제 이메일 링크 클릭이
+   필요해 이 환경에서 원천적으로 불가능. 오케스트레이터가 사용자에게 재가입/재클릭을 요청해
+   실제 클릭-스루로 재확인 필요.
+5. lint/test/build 클린 → **충족**
+
+### [개선/반복]
+1회 반복으로 코드 가능한 4개 기준 완전 충족. 5번째(실 클릭-스루)는 이 세션의 권한/환경 밖
+(실제 이메일 수신함 접근 불가) — 규칙 10, 추가 반복으로 해소 안 됨.
+
+### [종료/중단]
+프론트엔드 영역(`src/app/page.tsx` 등)은 이번 라운드에서 건드리지 않음 — `auth_error=1` 쿼리
+파라미터를 읽어 사용자에게 메시지를 보여주는 것은 성공 기준 3의 "빈 페이지/미처리 에러 없음"
+요건을 이미 만족하는 최소 구현이며(항상 유효한 `/` 페이지로 착지), 파라미터를 읽어 배너를
+띄우는 UI 작업은 frontend 트랙에 넘김(`history.ts`/`watchlist.ts` 때와 동일한 계약 분리 패턴).
+코드로 검증 가능한 부분은 모두 완료 — **중단(규칙 10, 실 클릭-스루만 남음)**.

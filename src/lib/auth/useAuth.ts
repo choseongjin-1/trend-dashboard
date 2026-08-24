@@ -53,7 +53,17 @@ export function useAuth(): UseAuthResult {
       setError("인증 기능을 사용할 수 없습니다.");
       return false;
     }
-    const { error: signUpError } = await supabase.auth.signUp({ email, password });
+    const { error: signUpError } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        // Points the confirmation email link at our callback route rather
+        // than relying solely on the Supabase dashboard's Site URL — works
+        // correctly in both local dev and production regardless of what
+        // that's set to.
+        emailRedirectTo: `${window.location.origin}/auth/callback`,
+      },
+    });
     if (signUpError) {
       setError(signUpError.message);
       return false;
