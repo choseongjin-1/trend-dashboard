@@ -3,6 +3,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import Home from "./page";
 import type { TrendsResponse } from "@/lib/trends/types";
+import type { WatchlistRow } from "@/lib/watchlist";
 import { useAuth } from "@/lib/auth/useAuth";
 
 vi.mock("@/lib/auth/useAuth", () => ({
@@ -186,22 +187,32 @@ describe("Home dashboard", () => {
   it("supports adding and removing a keyword from the watchlist when logged in", async () => {
     mockUseAuth.mockReturnValue({ ...loggedOut, user: { email: "creator@example.com" } });
 
-    let watchlistState: string[] = [];
+    let watchlistState: WatchlistRow[] = [];
+    let nextId = 1;
     vi.stubGlobal(
       "fetch",
       vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
         const url = typeof input === "string" ? input : input.toString();
         if (url.includes("/api/watchlist")) {
           if (!init?.method || init.method === "GET") {
-            return Promise.resolve(jsonResponse({ keywords: watchlistState }));
+            return Promise.resolve(jsonResponse(watchlistState));
           }
-          const body = JSON.parse(init.body as string) as { keyword: string };
           if (init.method === "POST") {
-            watchlistState = [...watchlistState, body.keyword];
-          } else if (init.method === "DELETE") {
-            watchlistState = watchlistState.filter((k) => k !== body.keyword);
+            const body = JSON.parse(init.body as string) as { keyword: string; region: string };
+            const row: WatchlistRow = {
+              id: String(nextId++),
+              keyword: body.keyword,
+              region: body.region,
+              created_at: "2026-08-24T00:00:00.000Z",
+            };
+            watchlistState = [...watchlistState, row];
+            return Promise.resolve(jsonResponse(row, { status: 201 }));
           }
-          return Promise.resolve(jsonResponse({ ok: true }));
+          if (init.method === "DELETE") {
+            const id = new URL(url, "http://localhost").searchParams.get("id");
+            watchlistState = watchlistState.filter((w) => w.id !== id);
+            return Promise.resolve(jsonResponse({ ok: true }));
+          }
         }
         return baseFetchImplementation(input);
       }),

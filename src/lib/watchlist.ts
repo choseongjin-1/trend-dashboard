@@ -1,70 +1,87 @@
-// Frontend-side client for /api/watchlist.
+// Frontend-side client for /api/watchlist, matching the real backend route
+// (src/app/api/watchlist/route.ts on backend-loop).
 //
-// That route is owned by the backend track this round and may not exist yet
-// in this worktree — it's expected to be session-aware (reads the caller's
-// Supabase session) and back a `watchlist` table. Its exact response shape
-// isn't guaranteed either, so — same discipline as src/lib/trends/history.ts
-// — every function here treats a non-2xx status, a network error, or a
-// malformed body as "unavailable" and returns a sentinel instead of
-// throwing. Callers must hide/disable watchlist UI on that sentinel, never
-// crash or surface it as a page error.
+// Session-aware — a logged-out caller gets 401, which this module treats the
+// same as any other failure: "unavailable", never thrown. Every function
+// here follows the same discipline as src/lib/trends/history.ts — a non-2xx
+// status, a network error, or a malformed body all resolve to a sentinel
+// (`null`/`false`) so callers hide/disable watchlist UI instead of crashing
+// or surfacing a page error.
 //
-// Assumed contract (reconcile once the backend route lands, if different):
-//   GET    /api/watchlist              -> { keywords: string[] }
-//   POST   /api/watchlist   {keyword}  -> 2xx on success
-//   DELETE /api/watchlist   {keyword}  -> 2xx on success
+// Real contract:
+//   GET    /api/watchlist            -> 200: WatchlistRow[]; 401 when signed out
+//   POST   /api/watchlist  {keyword, region?} -> 201 with the created row
+//   DELETE /api/watchlist?id=<uuid>  -> 200: { ok: true }
 
-function isWatchlistResponse(value: unknown): value is { keywords: string[] } {
+export interface WatchlistRow {
+  id: string;
+  keyword: string;
+  region: string;
+  created_at: string;
+}
+
+function isWatchlistRow(value: unknown): value is WatchlistRow {
   if (typeof value !== "object" || value === null) return false;
-  const body = value as Record<string, unknown>;
-  return Array.isArray(body.keywords) && body.keywords.every((k) => typeof k === "string");
+  const row = value as Record<string, unknown>;
+  return (
+    typeof row.id === "string" &&
+    typeof row.keyword === "string" &&
+    typeof row.region === "string" &&
+    typeof row.created_at === "string"
+  );
+}
+
+function isWatchlistRows(value: unknown): value is WatchlistRow[] {
+  return Array.isArray(value) && value.every(isWatchlistRow);
 }
 
 /**
  * Fetches the current user's watchlist. Returns `null` on any failure
- * (including "not logged in" / route missing) so callers hide the feature
- * rather than show a broken one.
+ * (including "not logged in" / a malformed body) so callers hide the
+ * feature rather than show a broken one.
  */
-export async function fetchWatchlist(signal?: AbortSignal): Promise<string[] | null> {
+export async function fetchWatchlist(signal?: AbortSignal): Promise<WatchlistRow[] | null> {
   try {
     const res = await fetch("/api/watchlist", { signal, credentials: "same-origin" });
     if (!res.ok) return null;
     const json: unknown = await res.json();
-    if (!isWatchlistResponse(json)) return null;
-    return json.keywords;
+    if (!isWatchlistRows(json)) return null;
+    return json;
   } catch {
     return null;
   }
 }
 
 /**
- * Adds a keyword to the watchlist. Returns `false` on any failure — caller
- * should leave local state unchanged (no optimistic update survives).
+ * Adds a keyword (for the given region) to the watchlist. Returns the
+ * created row on success, or `null` on any failure — caller should leave
+ * local state unchanged (no optimistic update survives).
  */
-export async function addToWatchlist(keyword: string): Promise<boolean> {
+export async function addToWatchlist(keyword: string, region: string): Promise<WatchlistRow | null> {
   try {
     const res = await fetch("/api/watchlist", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "same-origin",
-      body: JSON.stringify({ keyword }),
+      body: JSON.stringify({ keyword, region }),
     });
-    return res.ok;
+    if (!res.ok) return null;
+    const json: unknown = await res.json();
+    if (!isWatchlistRow(json)) return null;
+    return json;
   } catch {
-    return false;
+    return null;
   }
 }
 
 /**
- * Removes a keyword from the watchlist. Returns `false` on any failure.
+ * Removes a watchlist entry by its row id. Returns `false` on any failure.
  */
-export async function removeFromWatchlist(keyword: string): Promise<boolean> {
+export async function removeFromWatchlist(id: string): Promise<boolean> {
   try {
-    const res = await fetch("/api/watchlist", {
+    const res = await fetch(`/api/watchlist?id=${encodeURIComponent(id)}`, {
       method: "DELETE",
-      headers: { "Content-Type": "application/json" },
       credentials: "same-origin",
-      body: JSON.stringify({ keyword }),
     });
     return res.ok;
   } catch {

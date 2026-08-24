@@ -600,3 +600,51 @@ dev 서버 로그에 에러 없음.
 
 ### [종료]
 7개 성공 기준 모두 실측 증거로 충족. `frontend-loop`에 커밋 진행.
+
+## 반복 4 — 프론트엔드 (워치리스트 실계약 반영)
+
+### [배경]
+반복 3에서 `src/lib/watchlist.ts`에 추측으로 정의한 계약(`{keywords: string[]}` GET,
+`{keyword}` 본문의 POST/DELETE)과 백엔드가 실제로 구현한 `/api/watchlist`
+(`src/app/api/watchlist/route.ts`, backend-loop)가 불일치함이 발견됨 — 반복 2의
+`history.ts` 계약 수정과 동일한 패턴.
+
+**실제 계약**:
+```
+GET    /api/watchlist            -> 200: WatchlistRow[] (id/keyword/region/created_at); 401 로그아웃 시
+POST   /api/watchlist  {keyword, region?} -> 201, 생성된 row 반환
+DELETE /api/watchlist?id=<uuid>  -> 200: {ok:true}  (id는 쿼리 파라미터, body 아님)
+```
+기존 구현의 실제 버그: (1) GET 응답 파싱이 배열이 아닌 `{keywords}` 형태를 기대해 항상 실패,
+(2) `addToWatchlist`가 region을 서버에 전달하지 않아 선택된 지역과 무관하게 서버 기본값(KR)로
+저장됨(단순 파싱 불일치가 아니라 실제 정합성 버그), (3) `removeFromWatchlist`가 keyword를
+body로 보내 항상 400 — 삭제는 row의 `id`가 필요하므로 keyword만으로는 식별 불가.
+
+### [수정]
+- `src/lib/watchlist.ts`: `WatchlistRow` 타입 신설 + 배열 응답 타입가드로 전면 재작성.
+  `addToWatchlist(keyword, region)`이 region을 함께 전송하고 생성된 row를 반환(낙관적 갱신 시
+  서버가 부여한 id를 바로 사용하기 위함). `removeFromWatchlist(id)`가 `?id=` 쿼리로 DELETE.
+- `page.tsx`: `watchlist` 상태를 `string[]`에서 `WatchlistRow[]`로 변경. `toggleWatch`가
+  keyword+현재 `region` 조합으로 기존 항목을 찾아 있으면 id로 삭제, 없으면
+  `addToWatchlist(keyword, region)` 호출 후 반환된 row를 상태에 추가. 랭킹 행의 별표(★/☆)
+  상태도 동일하게 keyword+region 매칭으로 판정(동일 키워드를 지역별로 별도 추적 가능하다는
+  실제 계약을 반영). 패널 전용 제거 함수 `removeWatchlistEntry(id)` 추가.
+- `WatchlistPanel.tsx`: `keywords: string[]` prop을 `entries: WatchlistRow[]`로 변경, 각 칩에
+  지역 태그를 함께 표시(동일 키워드가 여러 지역에 중복 추적될 수 있어 구분 필요), `onRemove`가
+  이제 keyword가 아닌 `id`를 받음.
+- `page.test.tsx`의 워치리스트 해피패스 테스트를 실제 계약대로 재작성: GET이 배열 반환,
+  POST가 `{keyword, region}` 본문을 파싱해 생성된 row(id 포함) 반환, DELETE가 URL의 `?id=`
+  쿼리를 파싱해 처리.
+
+### [검증]
+```
+npm run lint   → 통과 (에러/경고 없음)
+npm run test   → Test Files 2 passed (2), Tests 13 passed (13)
+npm run build  → Compiled successfully, TypeScript 통과, 라우트 정상 생성
+```
+13개 테스트 전부 통과 — 워치리스트 추가/제거 해피패스 테스트가 새 계약(배열 GET, id 기반
+DELETE)으로도 동일하게 통과함을 확인했고, 나머지 12개(로그인/로그아웃 헤더, 지역 전환,
+히스토리 등)는 이번 변경과 무관해 회귀 없음.
+
+### [종료]
+워치리스트 계약 불일치 수정 완료, lint/test/build 전부 그린. `frontend-loop`에 커밋.
