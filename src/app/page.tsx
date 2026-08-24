@@ -3,17 +3,17 @@
 import { useCallback, useEffect, useState } from "react";
 import { TrendsResponse } from "@/lib/trends/types";
 import { fetchTrendsHistory, toHistoryMap, computeDelta, TrendHistoryPoint } from "@/lib/trends/history";
+import { fetchKeywordHistory } from "@/lib/trends/keywordHistory";
 import { REGIONS, DEFAULT_REGION } from "@/lib/trends/regions";
 import { fetchWatchlist, addToWatchlist, removeFromWatchlist, WatchlistRow } from "@/lib/watchlist";
 import { useAuth } from "@/lib/auth/useAuth";
 import { RankDelta } from "@/components/RankDelta";
 import { RankSparkline } from "@/components/RankSparkline";
-import { SpikeLine } from "@/components/SpikeLine";
 import { AuthHeader } from "@/components/AuthHeader";
 import { AuthModal } from "@/components/AuthModal";
 import { RegionTabs } from "@/components/RegionTabs";
 import { WatchlistPanel } from "@/components/WatchlistPanel";
-import { FlatSignal } from "@/components/FlatSignal";
+import { EmptyFlaps } from "@/components/EmptyFlaps";
 import { KeywordDetailModal } from "@/components/KeywordDetailModal";
 
 export default function Home() {
@@ -22,10 +22,14 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [historyMap, setHistoryMap] = useState<Map<string, TrendHistoryPoint[]>>(new Map());
+  // Bumped on every successful load so the row list remounts and replays the
+  // flap-in animation — the board "re-tallies" on refresh, like a real one.
+  const [revision, setRevision] = useState(0);
 
   const auth = useAuth();
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [detailKeyword, setDetailKeyword] = useState<string | null>(null);
+  const [detailHistory, setDetailHistory] = useState<TrendHistoryPoint[] | null | undefined>(undefined);
   // null = watchlist feature unavailable (logged out, or the API failed) — hide its UI entirely.
   const [watchlist, setWatchlist] = useState<WatchlistRow[] | null>(null);
 
@@ -37,6 +41,7 @@ export default function Home() {
       if (!res.ok) throw new Error(`요청 실패 (${res.status})`);
       const json = (await res.json()) as TrendsResponse;
       setData(json);
+      setRevision((r) => r + 1);
     } catch (e) {
       setError(e instanceof Error ? e.message : "알 수 없는 오류");
       setLoading(false);
@@ -75,6 +80,19 @@ export default function Home() {
     };
   }, [auth.user]);
 
+  useEffect(() => {
+    if (!detailKeyword) return;
+    let cancelled = false;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setDetailHistory(undefined);
+    fetchKeywordHistory(detailKeyword, region).then((points) => {
+      if (!cancelled) setDetailHistory(points);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [detailKeyword, region]);
+
   // A keyword can be tracked per-region, so "watched" for the currently
   // displayed list means an entry matching both keyword and active region.
   const toggleWatch = useCallback(
@@ -104,46 +122,39 @@ export default function Home() {
   const watchlistAvailable = !!auth.user && watchlist !== null;
 
   return (
-    <div className="min-h-screen bg-bg text-text">
-      <div className="border-b border-hairline bg-surface/40">
-        <div className="mx-auto max-w-2xl px-6 pb-7 pt-8">
-          <header className="mb-6 flex items-center justify-between">
-            <span className="font-display text-lg font-black tracking-tight text-signal">
-              SPIKE
-            </span>
-            <AuthHeader
-              user={auth.user}
-              loading={auth.loading}
-              onSignOut={auth.signOut}
-              onOpenAuth={() => setAuthModalOpen(true)}
-            />
-          </header>
-
-          <SpikeLine />
-          <h1 className="mt-4 font-display text-2xl font-black leading-[1.15] tracking-tight text-text sm:text-4xl">
-            지금, 가장 먼저 뜨는 키워드
-          </h1>
-          <p className="mt-3 max-w-md text-sm text-text-dim">
-            YouTube 인기 급상승 신호를 실시간으로 감지해 랭킹으로 보여드립니다. 워치리스트에
-            담아두면 순위가 바뀔 때마다 가장 먼저 알 수 있어요.
+    <div className="min-h-screen bg-casing text-flap">
+      <div className="border-b border-flap-dim/20 bg-panel">
+        <div className="mx-auto max-w-2xl px-6 py-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-4">
+              <span className="font-display text-xl tracking-wide text-flap">FLIP</span>
+              <RegionTabs regions={REGIONS} active={region} onChange={setRegion} />
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => load(region)}
+                disabled={loading}
+                className="rounded-sm border border-flap-dim/20 px-3 py-1.5 font-data text-xs text-flap-dim transition hover:border-flap-dim/40 hover:text-flap disabled:opacity-50"
+              >
+                {loading ? "갱신 중..." : "갱신"}
+              </button>
+              <AuthHeader
+                user={auth.user}
+                loading={auth.loading}
+                onSignOut={auth.signOut}
+                onOpenAuth={() => setAuthModalOpen(true)}
+              />
+            </div>
+          </div>
+          <p className="mt-2 font-body text-xs text-flap-dim">
+            YouTube 인기 급상승 신호를 실시간으로 감지하는 키워드 보드
           </p>
         </div>
       </div>
 
       <div className="mx-auto max-w-2xl px-6 py-6">
-        <div className="mb-5 flex items-center justify-between gap-4">
-          <RegionTabs regions={REGIONS} active={region} onChange={setRegion} />
-          <button
-            onClick={() => load(region)}
-            disabled={loading}
-            className="shrink-0 rounded-md bg-surface-2 px-3 py-1.5 text-sm text-text transition hover:bg-surface disabled:opacity-50"
-          >
-            {loading ? "신호 수신 중..." : "다시 스캔"}
-          </button>
-        </div>
-
         {data?.mocked && (
-          <div className="mb-4 rounded-md border border-signal-dim/60 bg-signal/10 px-3 py-2 text-sm text-signal">
+          <div className="mb-4 rounded-sm border border-flap-dim/25 bg-panel px-3 py-2 text-sm text-flap-dim">
             목업 데이터 표시 중입니다. YOUTUBE_API_KEY를 설정하면 실제 데이터로 전환됩니다.
           </div>
         )}
@@ -151,30 +162,30 @@ export default function Home() {
         {error && (
           <div
             role="alert"
-            className="mb-4 rounded-md border border-fall/50 bg-fall/10 px-3 py-2 text-sm text-fall"
+            className="mb-4 rounded-sm border border-falling/50 bg-falling/10 px-3 py-2 text-sm text-falling"
           >
             오류: {error}
           </div>
         )}
 
         {loading && !data && (
-          <div className="space-y-2">
+          <div className="space-y-1">
             {Array.from({ length: 8 }).map((_, i) => (
-              <div key={i} className="h-10 animate-pulse rounded-md bg-surface" />
+              <div key={i} className="h-11 animate-pulse rounded-sm bg-panel" />
             ))}
           </div>
         )}
 
         {isEmpty && (
-          <div className="flex flex-col items-center gap-3 rounded-md border border-dashed border-hairline px-4 py-14 text-center">
-            <FlatSignal />
-            <p className="text-sm font-medium text-text">아직 감지된 신호가 없습니다</p>
-            <p className="text-xs text-text-dim">잠시 후 다시 스캔해보세요.</p>
+          <div className="flex flex-col items-center gap-3 rounded-sm border border-dashed border-flap-dim/25 px-4 py-14 text-center">
+            <EmptyFlaps />
+            <p className="text-sm font-medium text-flap">표시할 키워드가 없습니다</p>
+            <p className="text-xs text-flap-dim">잠시 후 다시 갱신해보세요.</p>
             <button
               onClick={() => load(region)}
-              className="mt-2 rounded-md bg-surface-2 px-3 py-1.5 text-xs text-text hover:bg-surface"
+              className="mt-2 rounded-sm border border-flap-dim/20 px-3 py-1.5 text-xs text-flap-dim hover:border-flap-dim/40 hover:text-flap"
             >
-              다시 스캔
+              갱신
             </button>
           </div>
         )}
@@ -184,16 +195,20 @@ export default function Home() {
         )}
 
         {data && !isEmpty && (
-          <ol className="divide-y divide-hairline rounded-md border border-hairline">
-            {data.items.map((item) => {
+          <ol key={revision} className="flex flex-col gap-1">
+            {data.items.map((item, i) => {
               const history = historyMap.get(item.keyword);
               const delta = computeDelta(history);
               const isWatched =
                 watchlistAvailable &&
                 (watchlist ?? []).some((w) => w.keyword === item.keyword && w.region === region);
               return (
-                <li key={item.rank} className="flex items-center gap-4 px-4 py-3">
-                  <span className="w-6 text-right font-data text-base font-semibold text-text-dim">
+                <li
+                  key={item.rank}
+                  className="flap-row flex items-center gap-3 rounded-sm border border-flap-dim/10 bg-panel px-3 py-2.5 shadow-[0_1px_0_rgba(255,255,255,0.03)_inset,0_2px_4px_rgba(0,0,0,0.35)]"
+                  style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
+                >
+                  <span className="w-6 text-right font-data text-base font-bold text-flap-dim">
                     {item.rank}
                   </span>
                   {watchlistAvailable && (
@@ -204,14 +219,14 @@ export default function Home() {
                       }}
                       aria-label={isWatched ? "워치리스트에서 제거" : "워치리스트에 추가"}
                       aria-pressed={isWatched}
-                      className={`shrink-0 p-1 -m-1 text-base leading-none ${isWatched ? "text-signal" : "text-text-dim hover:text-signal"}`}
+                      className={`shrink-0 -m-1 p-1 text-base leading-none ${isWatched ? "text-flap" : "text-flap-dim/50 hover:text-flap"}`}
                     >
                       {isWatched ? "★" : "☆"}
                     </button>
                   )}
                   <button
                     onClick={() => setDetailKeyword(item.keyword)}
-                    className="min-w-0 flex-1 truncate py-1 text-left text-sm hover:text-signal"
+                    className="min-w-0 flex-1 truncate py-1 text-left font-data text-sm text-flap hover:text-flap/80"
                   >
                     {item.keyword}
                   </button>
@@ -223,7 +238,7 @@ export default function Home() {
                       </span>
                     </>
                   )}
-                  <span className="font-data text-xs text-text-dim">
+                  <span className="font-data text-xs text-flap-dim">
                     {item.score.toLocaleString()}
                   </span>
                 </li>
@@ -233,8 +248,8 @@ export default function Home() {
         )}
 
         {data && (
-          <p className="mt-4 flex items-center gap-1.5 text-xs text-text-dim">
-            <span className="live-dot inline-block h-1.5 w-1.5 rounded-full bg-rise" aria-hidden="true" />
+          <p className="mt-4 flex items-center gap-1.5 font-data text-[11px] text-flap-dim">
+            <span className="live-dot inline-block h-1.5 w-1.5 rounded-full bg-rising" aria-hidden="true" />
             마지막 갱신: {new Date(data.fetchedAt).toLocaleString()}
           </p>
         )}
@@ -252,7 +267,7 @@ export default function Home() {
         <KeywordDetailModal
           keyword={detailKeyword}
           regionLabel={REGIONS.find((r) => r.code === region)?.label ?? region}
-          history={historyMap.get(detailKeyword)}
+          history={detailHistory}
           onClose={() => setDetailKeyword(null)}
         />
       )}
