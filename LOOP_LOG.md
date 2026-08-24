@@ -1466,3 +1466,194 @@ checkRateLimit: rpc failed {
 `0003_rate_limiting.sql` 라이브 적용 필요(SQL Editor, 이전 두 번과 동일한 절차) — 적용 후
 동일 IP로 31회 이상 빠르게 호출해 31번째부터 `429` + `Retry-After` 헤더가 실제로 나오는지
 재검증 필요. 그 외 전부 완료 — **중단(규칙 10, 라이브 적용 대기)**.
+
+## 반복 6 — 프론트엔드 (키워드 상세 뷰 + 모바일 반응형 + SEO/OG)
+
+### [목표]
+결제(Stripe)는 별도 트랙에서 차단된 상태이며 이번 라운드와 무관. 새 크리덴셜 없이 실제
+제품 가치를 계속 쌓는 라운드로 3개 목표: (1) 키워드 클릭 시 더 크고 상세한 순위 추이
+차트를 보여주는 상세 뷰 — 워치리스트가 실제로 쓸모 있어지는 기능, (2) 모바일(390×844)
+실제 스크린샷 기반 반응형 교정, (3) 공개 저장소/포트폴리오 링크로 공유될 것을 고려한
+SEO/Open Graph 메타데이터.
+
+### [성공 기준]
+1. 키워드 상세 뷰: 클릭 시 확대된 순위 추이 차트, 데이터 희소(0-1개 스냅샷) 시
+   "아직 데이터가 충분하지 않습니다" 명확한 상태 표시 (빈 차트/깨진 화면 금지)
+2. 모바일 스크린샷(홈/인증 모달/상세 뷰)으로 실제 문제 발견 시 수정, 맹목적 브레이크포인트
+   추가 금지
+3. `<title>`/description/Open Graph(og:title/description/image) 메타, SPIKE 보이스 유지
+4. 데스크톱+모바일 실측 스크린샷 증거, lint/test/build 클린
+
+### [계획]
+1. `git merge main` — 확인 결과 `frontend-loop`가 이미 `main`보다 앞서 있어(반복 5 커밋이
+   아직 오케스트레이터에 의해 `main`에 머지되지 않음) `Already up to date`, 별도 조치 불필요
+2. `dataviz` 스킬 로드 후 차트 설계(단일 시리즈 변화 추이 → 라인 차트, 팔레트 검증은
+   범주형 다색 배색이 아니므로 스킵, 마크 스펙/호버 크로스헤어+툴팁 원칙만 적용)
+3. 백엔드가 병행으로 `/api/trends/history` 확장 또는 전용 `/api/trends/keyword-history`
+   신설을 검토 중이라는 안내를 받았으나, 이미 `page.tsx`가 스파크라인/델타용으로 정확히
+   같은 데이터(`historyMap`)를 매 리전마다 캐싱 없이 확보하고 있어, 신규 네트워크 요청 없이
+   기존 데이터를 재사용하는 쪽을 택함(불확실한 계약에 새로 의존하지 않는 낮은 리스크 선택).
+   백엔드가 더 높은 해상도의 전용 엔드포인트를 내놓으면 향후 라운드에서 `history.ts`/
+   `watchlist.ts` 때와 같은 방식으로 재조정
+4. `RankHistoryChart`(축/그리드/호버 크로스헤어+툴팁/마지막 지점 직접 라벨) +
+   `KeywordDetailModal`(통계 요약 + 희소 데이터 안내) 신설, `page.tsx`에 키워드 클릭 진입점
+   연결(별표 토글과 별도 버튼, 이벤트 버블링 방지)
+5. `npm install -D playwright` 이미 존재 확인(반복 5에서 설치됨) — 실행 중인 dev 서버를
+   데스크톱/모바일 두 뷰포트로 스크린샷하는 재사용 가능한 임시 스크립트 작성(커밋 대상
+   아님, 완료 후 삭제)
+6. 모바일(390×844) 스크린샷 3종(홈/인증 모달/상세 뷰) 촬영 후 실제 문제만 교정
+7. Next 문서(`node_modules/next/dist/docs`, 이 버전 기준) 확인 후 `opengraph-image.png`
+   파일 컨벤션 + `metadata.openGraph`/`metadata.twitter` 필드로 SEO 메타 추가. 정적 이미지는
+   SPIKE 톤(웜 근접-블랙 배경, 앰버 워드마크/헤드라인, SpikeLine 모티프)으로 브랜드에 맞는
+   HTML 목업을 Playwright로 1200×630 스크린샷해 생성(동적 `ImageResponse` 불필요 — 과제
+   지시대로 정적 이미지로 충분)
+8. 키워드 상세 뷰 테스트 2건 추가(충분한 데이터 → 차트, 희소 데이터 → 안내 문구),
+   기존 25개 회귀 확인
+9. lint → test → build, 데스크톱/모바일 최종 스크린샷 재확인, dev 서버 종료, 스크래치
+   스크립트 삭제
+
+### [실행 + 관찰]
+
+**신규 파일**
+- `src/components/RankHistoryChart.tsx` — 단일 키워드 순위 추이 상세 차트(SVG, y축 실제
+  순위 눈금 3개, x축 첫/마지막 타임스탬프만 라벨링해 과밀 방지, 호버 시 세로 크로스헤어 +
+  HTML 툴팁, 마지막 지점에 상시 노출되는 "N위" 직접 라벨)
+- `src/components/KeywordDetailModal.tsx` — 현재/최고 순위·스냅샷 개수 통계 + 차트, 히스토리
+  2개 미만이면 `FlatSignal` 아이콘과 함께 "아직 데이터가 충분하지 않습니다" 표시
+- `src/app/opengraph-image.png` — Next.js 파일 컨벤션(자동 인식, 코드 불필요)으로 배치한
+  정적 1200×630 OG 이미지
+
+**수정 파일**
+- `src/app/page.tsx` — 상세 뷰 진입점(키워드를 별도 `<button>`으로 분리, 별표 버튼은
+  `stopPropagation`으로 클릭 충돌 방지), 모바일 헤드라인 크기 축소(`text-3xl`→`text-2xl`,
+  `sm:text-4xl`은 유지) — 아래 [모바일 교정] 참고
+- `src/components/RegionTabs.tsx` — 모바일 교정(아래 참고)
+- `src/app/layout.tsx` — `metadataBase`, `openGraph`, `twitter` 필드 추가
+- `.env.example` — `NEXT_PUBLIC_SITE_URL`(선택, OG 절대 URL 해석용) 문서화
+- `src/app/page.test.tsx` — 키워드 상세 뷰 테스트 2건 추가
+
+**차트 관련 발견 + 수정 (구현 중 자체 발견)**: 실 데이터로 첫 스크린샷을 찍었을 때, 순위가
+줄곧 1위로 고정된 키워드(BIGBANG — 정확히 SPIKE가 강조해야 할 "계속 1위" 시나리오)의
+경우 그래프가 차트 상단 여백에 딱 붙어 그려져 마지막 지점의 "1위" 직접 라벨이 상단 밖으로
+거의 잘려나가는 실측 버그를 발견. `PAD_TOP`을 14→22로 늘려 해결, 스크린샷으로 재확인.
+
+**[모바일 교정]** 390×844 스크린샷으로 실제 확인한 문제만 수정:
+1. 헤드라인 "지금, 가장 먼저 뜨는 키워드"가 `text-3xl` 기준폭에서 "키워" / "드"로 단어 중간이
+   깨져 두 줄로 잘림 → 모바일 기준 크기를 `text-2xl`로 낮춤(`sm:` 이상에서는 기존 `text-4xl`
+   유지, 데스크톱 영향 없음 스크린샷으로 확인)
+2. 지역 탭이 "KR 대한민국" 식으로 코드+라벨을 한 버튼에 다 넣다 보니 좁은 화면에서 라벨이
+   줄바꿈되며 탭 3개 + "다시 스캔" 버튼이 뒤엉켜 보임 → 라벨 텍스트를 `hidden sm:inline`으로
+   감춰 모바일에서는 "KR/US/JP" 코드만 표시(데스크톱은 기존과 동일하게 전체 라벨 유지)
+3. 인증 모달·키워드 상세 모달은 이미 반복 3/이번 라운드에서 만든 `fixed inset-0 ... px-4`
+   패턴 덕에 모바일에서 별도 수정 없이 정상 동작 확인(스크린샷으로 검증, 가로 스크롤/겹침
+   없음) — "모든 곳에 브레이크포인트 추가" 같은 맹목적 수정을 하지 않고 실제로 깨진 2곳만
+   고쳤다는 근거
+
+**`npm run lint`** — 통과 (에러/경고 없음, exit 0).
+
+**`npm run test`**
+```
+ Test Files  4 passed (4)
+      Tests  27 passed (27)
+```
+신규 2건(충분한 히스토리 → 차트+통계 노출, 희소 히스토리 → 안내 문구) 포함 27개 전부 통과 —
+기존 25개 회귀 없음.
+
+**`npm run build`**
+```
+✓ Compiled successfully
+Route (app): /, /_not-found, /api/cron/refresh-trends, /api/trends, /api/trends/history,
+              /api/watchlist, /opengraph-image.png
+```
+`/opengraph-image.png`가 정적 라우트로 자동 생성됨 — 파일 컨벤션이 정상 인식됐다는 실측 증거.
+
+**메타 태그 실측 확인** (`curl localhost:3005/ | grep`):
+```
+<title>SPIKE — 지금 뜨는 키워드를 가장 먼저</title>
+<meta name="description" content="... 워치리스트에 담아두면 순위가 바뀔 때마다 가장 먼저 알 수 있어요."/>
+<meta property="og:title" .../> <meta property="og:description" .../>
+<meta property="og:image" content=".../opengraph-image.png?..."/> (width=1200, height=630 자동 인식)
+<meta name="twitter:card" content="summary_large_image"/> 외 twitter:title/description/image 전부 정상
+```
+
+**데스크톱/모바일 최종 스크린샷** (dev 서버 `-p 3005`, 실 YouTube/Supabase 데이터):
+- 데스크톱(900×700): 홈 정상, 상세 모달에서 BIGBANG 17개 스냅샷 차트(현재 1위/최고 1위)가
+  라벨 잘림 없이 정상 렌더링
+- 모바일(390×844): 홈(헤드라인 한 줄, 지역 탭 한 줄로 정상), 인증 모달(폼 필드/버튼 전부
+  뷰포트 안에 들어옴, 가로 스크롤 없음), 상세 뷰(차트 축/라벨/툴팁 자리 전부 정상, 겹침 없음)
+
+**dev 서버 종료**: `lsof -ti:3005 | xargs kill` 후 포트 확인 → 정상 종료. 스크래치
+스크린샷 스크립트(`.scratch-*.mjs`) 삭제, 커밋 대상에서 제외.
+
+### [검증] — 성공 기준 대조
+1. 키워드 상세 뷰 — 차트 정상 렌더링(스크린샷+테스트) + 희소 데이터 안내 문구(테스트로
+   확인) → **충족**
+2. 모바일 반응형 — 실제 스크린샷에서 발견한 2개 문제(헤드라인 줄바꿈, 지역 탭 겹침)만
+   근거와 함께 수정, 나머지는 이미 정상 동작 확인 → **충족**
+3. SEO/OG — title/description/openGraph/twitter 메타 + 정적 브랜드 OG 이미지, 실측 curl로
+   태그 확인 → **충족**
+4. 증거/클린 — 데스크톱+모바일 스크린샷, lint/test(27개)/build 전부 실측 그린 → **충족**
+
+### [개선/반복]
+1회 반복으로 4개 기준 모두 충족되어 추가 반복 불필요(규칙 9). 정직하게 기록할 한계:
+- 키워드 상세 차트는 신규 엔드포인트 없이 `/api/trends/history`가 이미 제공하는 스냅샷
+  (기본 20개 제한)만 사용 — 백엔드가 전용 `/api/trends/keyword-history`를 더 높은 해상도로
+  내놓으면 마이그레이션 필요(위 [계획] 3번에 근거 기록)
+- `dataviz` 스킬의 "접근성 최종 점검" 중 "표 형태 보기" 항목은 이번 단일 시리즈 차트에는
+  생략(범례가 필요 없는 단일 시리즈이고, 실제 순위 숫자가 축/툴팁/직접 라벨로 이미 텍스트로
+  노출되어 있어 우선순위상 스킵 — 향후 접근성 감사 라운드에서 재검토 권장)
+
+### [종료]
+4개 성공 기준 모두 실측 증거로 충족. `frontend-loop`에 커밋 진행.
+
+---
+
+## 통합 (merge) — `backend-loop` ← `frontend-loop` (키워드 상세 뷰 + 모바일 + SEO, `7c6d647`)
+
+> `backend-loop`(HEAD `c983019`)에서 `git merge frontend-loop`(`7c6d647`) 실행.
+
+### [충돌 및 해소]
+- `LOOP_LOG.md`만 content 충돌. 이번엔 단순 "공통 prefix 찾기"가 통하지 않았음 — 백엔드 쪽
+  파일이 공통 조상(`bfff14d`, 1107줄) 이후로 자체 섹션 2개(라이브 스키마 재검증+마이그레이션
+  개편, auth 콜백)를 먼저 추가했고, 그 뒤에야 프론트엔드의 `bfff14d` 시점 섹션을 이어붙인
+  상태였어서, `bfff14d:LOOP_LOG.md`를 그대로 라인 단위로 ours와 비교하면 순서가 어긋나 있었음
+  (내용 자체는 양쪽 다 있었지만 배치 순서가 다름). 대신 `git show HEAD:LOOP_LOG.md`(병합 시작
+  직전의 진짜 ours, 1468줄)와 `bfff14d:LOOP_LOG.md`(1107줄)를 비교해 `7c6d647`이 그 뒤에 정확히
+  추가한 구간(1108~1246행, "반복 6 — 프론트엔드" 섹션 139줄)만 골라낸 뒤, 진짜 ours 뒤에
+  그대로 이어붙임 — 재작업/중복 없음. 첫 시도에서 셸 `&&` 체인이 `diff`(내용 다름 → 비정상
+  종료 취급)에서 끊겨 파일이 원래 conflict marker 상태 그대로 남은 실수가 있었고, `git show
+  HEAD:...`로 진짜 ours를 다시 추출해 재작업함 — 조인 지점(1468/1469행)을 직접 눈으로 확인 후
+  적용.
+- `.env.example`, `layout.tsx`, `page.tsx`, `page.test.tsx`, `RegionTabs.tsx`, 신규
+  `KeywordDetailModal.tsx`/`RankHistoryChart.tsx`/`opengraph-image.png` — 전부 자동 병합
+  (백엔드 이번 라운드와 겹치는 파일 없음).
+
+### [검증 — 통합 결과 실측]
+```
+npm run lint   → 빈 출력, exit 0
+npm run test   → Test Files 6 passed (6), Tests 47 passed (47)  (45 + frontend의 신규 2개)
+npm run build  → Compiled successfully, TypeScript 통과, 9개 라우트(+/opengraph-image.png) 정상 생성
+```
+
+**`npm run dev -- -p 3001` + curl (실 크리덴셜, 8개 요청)**
+```
+GET  /                                                       → HTTP 200
+GET  /api/trends?region=KR                                   → HTTP 200
+GET  /api/trends/history?region=KR                           → HTTP 200
+GET  /api/trends/keyword-history?keyword=BIGBANG&region=KR   → HTTP 200
+GET  /auth/callback (code 없음)                                → HTTP 307
+GET  /api/watchlist (세션 없음)                                 → HTTP 401
+GET  /opengraph-image.png                                     → HTTP 200
+POST /api/cron/refresh-trends (correct secret)                → HTTP 200
+```
+dev 로그 전수 확인 — `PGRST202`(0003 미적용으로 인한 rate-limit RPC 부재, 이미 문서화한 것과
+동일 클래스) 외 예상 밖 에러/회귀 없음. 정상 종료 확인.
+
+**참고**: frontend가 이번 라운드 로그에 명시적으로 남긴 메모대로, `KeywordDetailModal`은 백엔드가
+새로 만든 `/api/trends/keyword-history`를 기다리지 않고 기존 `/api/trends/history`(기본 20개
+스냅샷 제한)로 구현되어 있어 지금 당장 라우트 계약 충돌은 없음 — 다음 프론트엔드 라운드에서
+전용 엔드포인트로 전환할지는 그쪽 판단(오케스트레이터가 이미 인지).
+
+### [결론]
+`7c6d647` 반영 후 lint/test(47개)/build/dev 8요청 curl 전부 그린 — 회귀 없음.
+`backend-loop`에 머지 커밋 진행 후 `main`으로 병합·푸시 예정.

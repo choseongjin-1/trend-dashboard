@@ -21,12 +21,12 @@ export function RegionTabs({ regions, active, onChange }: RegionTabsProps) {
             role="tab"
             aria-selected={isActive}
             onClick={() => onChange(region.code)}
-            className={`relative px-3 py-2 font-data text-xs tracking-wide transition ${
+            className={`relative whitespace-nowrap px-2.5 py-2 font-data text-xs tracking-wide transition sm:px-3 ${
               isActive ? "text-signal" : "text-text-dim hover:text-text"
             }`}
           >
             {region.code}
-            <span className="ml-1.5 font-body text-[11px]">{region.label}</span>
+            <span className="ml-1.5 hidden font-body text-[11px] sm:inline">{region.label}</span>
             {isActive && <span className="absolute inset-x-0 -bottom-px h-0.5 bg-signal" />}
           </button>
         );

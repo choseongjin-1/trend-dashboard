@@ -18,9 +18,28 @@ const jetbrainsMono = JetBrains_Mono({
   subsets: ["latin"],
 });
 
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
+const TITLE = "SPIKE — 지금 뜨는 키워드를 가장 먼저";
+const DESCRIPTION =
+  "YouTube 인기 급상승 신호를 실시간으로 감지하는 키워드 랭킹 대시보드. 워치리스트에 담아두면 순위가 바뀔 때마다 가장 먼저 알 수 있어요.";
+
 export const metadata: Metadata = {
-  title: "SPIKE — 지금 뜨는 키워드를 가장 먼저",
-  description: "YouTube 인기 급상승 기준 실시간 키워드 랭킹 대시보드",
+  metadataBase: new URL(SITE_URL),
+  title: TITLE,
+  description: DESCRIPTION,
+  openGraph: {
+    title: TITLE,
+    description: DESCRIPTION,
+    url: SITE_URL,
+    siteName: "SPIKE",
+    locale: "ko_KR",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: TITLE,
+    description: DESCRIPTION,
+  },
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

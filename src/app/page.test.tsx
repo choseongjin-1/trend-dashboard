@@ -238,4 +238,62 @@ describe("Home dashboard", () => {
       expect(within(panelSection).queryByText("가을 캠핑 브이로그")).not.toBeInTheDocument();
     });
   });
+
+  it("opens a keyword detail view with a rank-history chart when enough history exists", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url.includes("/api/trends/history")) {
+          const snapshots = [
+            {
+              id: "1",
+              source: "youtube",
+              region: "KR",
+              fetched_at: "2026-08-24T00:00:00.000Z",
+              items: [{ rank: 3, keyword: "가을 캠핑 브이로그", source: "youtube", score: 90000 }],
+              created_at: "2026-08-24T00:00:00.000Z",
+            },
+            {
+              id: "2",
+              source: "youtube",
+              region: "KR",
+              fetched_at: "2026-08-24T01:00:00.000Z",
+              items: [{ rank: 1, keyword: "가을 캠핑 브이로그", source: "youtube", score: 100000 }],
+              created_at: "2026-08-24T01:00:00.000Z",
+            },
+          ];
+          return Promise.resolve(jsonResponse(snapshots));
+        }
+        return baseFetchImplementation(input);
+      }),
+    );
+    const user = userEvent.setup();
+
+    render(<Home />);
+    await screen.findByText("가을 캠핑 브이로그");
+
+    await user.click(screen.getByRole("button", { name: "가을 캠핑 브이로그" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "가을 캠핑 브이로그 순위 추이" });
+    expect(within(dialog).getByText(/현재/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/최고/)).toBeInTheDocument();
+    expect(within(dialog).getByRole("img", { name: "키워드 순위 추이 차트" })).toBeInTheDocument();
+    expect(within(dialog).queryByText("아직 데이터가 충분하지 않습니다")).not.toBeInTheDocument();
+  });
+
+  it("shows a clear message instead of a chart when a keyword has too little history", async () => {
+    const user = userEvent.setup();
+
+    // baseFetchImplementation returns a 404 for /api/trends/history, so every
+    // keyword resolves to an empty history — the sparse-data case.
+    render(<Home />);
+    await screen.findByText("가을 캠핑 브이로그");
+
+    await user.click(screen.getByRole("button", { name: "가을 캠핑 브이로그" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "가을 캠핑 브이로그 순위 추이" });
+    expect(within(dialog).getByText("아직 데이터가 충분하지 않습니다")).toBeInTheDocument();
+    expect(within(dialog).queryByRole("img", { name: "키워드 순위 추이 차트" })).not.toBeInTheDocument();
+  });
 });
