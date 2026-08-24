@@ -119,7 +119,7 @@ describe("Home dashboard", () => {
 
     render(<Home />);
 
-    expect(await screen.findByText("표시할 랭킹 데이터가 없습니다")).toBeInTheDocument();
+    expect(await screen.findByText("아직 감지된 신호가 없습니다")).toBeInTheDocument();
   });
 
   it("degrades gracefully when the history endpoint returns malformed data", async () => {

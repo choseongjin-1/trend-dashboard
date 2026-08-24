@@ -13,6 +13,7 @@ import { AuthHeader } from "@/components/AuthHeader";
 import { AuthModal } from "@/components/AuthModal";
 import { RegionTabs } from "@/components/RegionTabs";
 import { WatchlistPanel } from "@/components/WatchlistPanel";
+import { FlatSignal } from "@/components/FlatSignal";
 
 export default function Home() {
   const [region, setRegion] = useState<string>(DEFAULT_REGION);
@@ -101,29 +102,33 @@ export default function Home() {
   const watchlistAvailable = !!auth.user && watchlist !== null;
 
   return (
-    <div className="min-h-screen bg-bg px-6 py-8 text-text">
-      <div className="mx-auto max-w-2xl">
-        <header className="mb-6 flex items-center justify-between">
-          <span className="font-display text-lg font-black tracking-tight text-signal">SPIKE</span>
-          <AuthHeader
-            user={auth.user}
-            loading={auth.loading}
-            onSignOut={auth.signOut}
-            onOpenAuth={() => setAuthModalOpen(true)}
-          />
-        </header>
+    <div className="min-h-screen bg-bg text-text">
+      <div className="border-b border-hairline bg-surface/40">
+        <div className="mx-auto max-w-2xl px-6 pb-7 pt-8">
+          <header className="mb-6 flex items-center justify-between">
+            <span className="font-display text-lg font-black tracking-tight text-signal">
+              SPIKE
+            </span>
+            <AuthHeader
+              user={auth.user}
+              loading={auth.loading}
+              onSignOut={auth.signOut}
+              onOpenAuth={() => setAuthModalOpen(true)}
+            />
+          </header>
 
-        <section className="mb-8">
           <SpikeLine />
-          <h1 className="mt-3 font-display text-2xl font-bold leading-tight text-text sm:text-3xl">
+          <h1 className="mt-4 font-display text-3xl font-black leading-[1.1] tracking-tight text-text sm:text-4xl">
             지금, 가장 먼저 뜨는 키워드
           </h1>
-          <p className="mt-2 text-sm text-text-dim">
+          <p className="mt-3 max-w-md text-sm text-text-dim">
             YouTube 인기 급상승 신호를 실시간으로 감지해 랭킹으로 보여드립니다. 워치리스트에
             담아두면 순위가 바뀔 때마다 가장 먼저 알 수 있어요.
           </p>
-        </section>
+        </div>
+      </div>
 
+      <div className="mx-auto max-w-2xl px-6 py-6">
         <div className="mb-5 flex items-center justify-between gap-4">
           <RegionTabs regions={REGIONS} active={region} onChange={setRegion} />
           <button
@@ -131,7 +136,7 @@ export default function Home() {
             disabled={loading}
             className="shrink-0 rounded-md bg-surface-2 px-3 py-1.5 text-sm text-text transition hover:bg-surface disabled:opacity-50"
           >
-            {loading ? "불러오는 중..." : "새로고침"}
+            {loading ? "신호 수신 중..." : "다시 스캔"}
           </button>
         </div>
 
@@ -159,17 +164,15 @@ export default function Home() {
         )}
 
         {isEmpty && (
-          <div className="flex flex-col items-center gap-2 rounded-md border border-dashed border-hairline px-4 py-14 text-center">
-            <span className="text-3xl">🔍</span>
-            <p className="text-sm font-medium text-text">표시할 랭킹 데이터가 없습니다</p>
-            <p className="text-xs text-text-dim">
-              잠시 후 다시 시도하거나 새로고침 버튼을 눌러주세요.
-            </p>
+          <div className="flex flex-col items-center gap-3 rounded-md border border-dashed border-hairline px-4 py-14 text-center">
+            <FlatSignal />
+            <p className="text-sm font-medium text-text">아직 감지된 신호가 없습니다</p>
+            <p className="text-xs text-text-dim">잠시 후 다시 스캔해보세요.</p>
             <button
               onClick={() => load(region)}
               className="mt-2 rounded-md bg-surface-2 px-3 py-1.5 text-xs text-text hover:bg-surface"
             >
-              다시 시도
+              다시 스캔
             </button>
           </div>
         )}
@@ -188,7 +191,7 @@ export default function Home() {
                 (watchlist ?? []).some((w) => w.keyword === item.keyword && w.region === region);
               return (
                 <li key={item.rank} className="flex items-center gap-4 px-4 py-3">
-                  <span className="w-6 text-right font-data text-sm font-medium text-text-dim">
+                  <span className="w-6 text-right font-data text-base font-semibold text-text-dim">
                     {item.rank}
                   </span>
                   {watchlistAvailable && (
