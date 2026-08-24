@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { fetchYoutubeTrends } from "@/lib/trends/youtube";
-import { getMockTrends } from "@/lib/trends/mock";
+import { buildTrendsResponse } from "@/lib/trends/ingest";
 import { saveTrendSnapshot } from "@/lib/trends/persist";
 import { SUPPORTED_REGIONS } from "@/lib/trends/regions";
 
@@ -28,38 +27,28 @@ function isAuthorized(req: NextRequest): boolean {
 interface RegionResult {
   region: string;
   mocked: boolean;
+  sources: string[];
   items: number;
-  error?: string;
 }
 
 async function refreshRegion(region: string): Promise<RegionResult> {
-  try {
-    const trends = process.env.YOUTUBE_API_KEY
-      ? await fetchYoutubeTrends(region)
-      : getMockTrends(region);
-    await saveTrendSnapshot(trends);
-    return { region, mocked: trends.mocked, items: trends.items.length };
-  } catch (err) {
-    console.error(`refreshRegion(${region}): live fetch failed, saving mock fallback`, err);
-    const trends = getMockTrends(region);
-    await saveTrendSnapshot(trends);
-    return {
-      region,
-      mocked: trends.mocked,
-      items: trends.items.length,
-      error: err instanceof Error ? err.message : String(err),
-    };
-  }
+  // buildTrendsResponse never throws — each source (YouTube, Hacker News)
+  // degrades to mock data independently on failure, so there's no
+  // try/catch needed at this level anymore (that resilience lives in
+  // src/lib/trends/ingest.ts, shared with /api/trends).
+  const trends = await buildTrendsResponse(region);
+  await saveTrendSnapshot(trends);
+  return { region, mocked: trends.mocked, sources: trends.sources, items: trends.items.length };
 }
 
 /**
  * POST /api/cron/refresh-trends
  *
- * Scheduled ingestion job: fetches + aggregates + saves a snapshot for
- * every region in SUPPORTED_REGIONS. This is the only place that should
- * call the live YouTube API on a schedule — /api/trends itself now serves
- * from these stored snapshots (see getFreshTrendSnapshot) so normal page
- * traffic doesn't burn quota.
+ * Scheduled ingestion job: fetches + blends every source and saves a
+ * snapshot for every region in SUPPORTED_REGIONS. This is the only place
+ * that should call the live source APIs on a schedule — /api/trends itself
+ * now serves from these stored snapshots (see getFreshTrendSnapshot) so
+ * normal page traffic doesn't re-fetch every source on every request.
  */
 export async function POST(req: NextRequest) {
   if (!isAuthorized(req)) {

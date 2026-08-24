@@ -1,4 +1,4 @@
-export type TrendSource = "youtube";
+export type TrendSource = "youtube" | "hackernews";
 
 export interface TrendItem {
   rank: number;
@@ -10,7 +10,8 @@ export interface TrendItem {
 }
 
 export interface TrendsResponse {
-  source: TrendSource;
+  /** Every source blended into `items` for this response — see src/lib/trends/ingest.ts. */
+  sources: TrendSource[];
   region: string;
   fetchedAt: string;
   mocked: boolean;

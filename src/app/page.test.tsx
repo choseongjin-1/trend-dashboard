@@ -30,7 +30,7 @@ function jsonResponse(body: unknown, init?: Partial<{ ok: boolean; status: numbe
 }
 
 const mockTrends: TrendsResponse = {
-  source: "youtube",
+  sources: ["youtube"],
   region: "KR",
   fetchedAt: "2026-08-24T00:00:00.000Z",
   mocked: true,

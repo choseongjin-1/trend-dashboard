@@ -1,5 +1,20 @@
 import { getSupabaseServerClient } from "@/lib/supabase/server";
-import { TrendsResponse } from "./types";
+import { TrendSource, TrendsResponse } from "./types";
+
+/**
+ * The `source` column predates multi-source blending and is `text not
+ * null` — rather than a migration to widen it, a snapshot's sources are
+ * stored as a comma-joined string (e.g. "youtube,hackernews") and parsed
+ * back on read. An old single-source row ("youtube") round-trips fine:
+ * splitting on "," with no comma present just yields a one-element array.
+ */
+export function serializeSources(sources: TrendSource[]): string {
+  return sources.join(",");
+}
+
+export function parseSources(value: string): TrendSource[] {
+  return value.split(",").filter(Boolean) as TrendSource[];
+}
 
 const TABLE = "trend_snapshots";
 
@@ -23,7 +38,7 @@ export async function saveTrendSnapshot(snapshot: TrendsResponse): Promise<void>
 
   try {
     const { error } = await client.from(TABLE).insert({
-      source: snapshot.source,
+      source: serializeSources(snapshot.sources),
       region: snapshot.region,
       fetched_at: snapshot.fetchedAt,
       mocked: snapshot.mocked,
@@ -143,7 +158,7 @@ export function extractKeywordHistory(
 /** Converts a stored snapshot row back into the public TrendsResponse shape. */
 export function snapshotRowToResponse(row: TrendSnapshotRow): TrendsResponse {
   return {
-    source: row.source as TrendsResponse["source"],
+    sources: parseSources(row.source),
     region: row.region,
     fetchedAt: row.fetched_at,
     mocked: row.mocked,

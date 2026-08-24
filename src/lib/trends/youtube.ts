@@ -1,4 +1,4 @@
-import { TrendItem, TrendsResponse } from "./types";
+import { TrendItem } from "./types";
 
 const YOUTUBE_API_URL = "https://www.googleapis.com/youtube/v3/videos";
 
@@ -49,7 +49,12 @@ export function aggregateTrendItems(
     }));
 }
 
-export async function fetchYoutubeTrends(region: string): Promise<TrendsResponse> {
+/**
+ * Fetches + aggregates YouTube's ranked trending items for a region.
+ * Throws on any failure (missing key, network error, non-2xx) — callers
+ * (src/lib/trends/ingest.ts) catch this and fall back to mock items.
+ */
+export async function fetchYoutubeItems(region: string): Promise<TrendItem[]> {
   const apiKey = process.env.YOUTUBE_API_KEY;
   if (!apiKey) {
     throw new Error("YOUTUBE_API_KEY is not set");
@@ -70,13 +75,5 @@ export async function fetchYoutubeTrends(region: string): Promise<TrendsResponse
 
   const data = (await res.json()) as { items: YouTubeVideoItem[] };
 
-  const items = aggregateTrendItems(data.items);
-
-  return {
-    source: "youtube",
-    region,
-    fetchedAt: new Date().toISOString(),
-    mocked: false,
-    items,
-  };
+  return aggregateTrendItems(data.items);
 }

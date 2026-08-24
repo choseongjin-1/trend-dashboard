@@ -1,6 +1,6 @@
-import { TrendsResponse } from "./types";
+import { TrendItem } from "./types";
 
-const MOCK_TITLES = [
+const MOCK_YOUTUBE_TITLES = [
   "가을 캠핑 브이로그",
   "저속노화 식단 챌린지",
   "에어프라이어 신메뉴",
@@ -13,17 +13,31 @@ const MOCK_TITLES = [
   "미니멀 라이프 정리",
 ];
 
-export function getMockTrends(region: string): TrendsResponse {
-  return {
+const MOCK_HACKERNEWS_TITLES = [
+  "Show HN: A tiny static site generator in 200 lines",
+  "Why we moved off Kubernetes",
+  "The C standard library, annotated",
+  "Ask HN: How do you review a 10k-line PR?",
+  "PostgreSQL 18 released",
+  "A postmortem on our outage last week",
+  "Rewriting our build system in Rust",
+  "Understanding TCP congestion control",
+];
+
+export function getMockYoutubeItems(): TrendItem[] {
+  return MOCK_YOUTUBE_TITLES.map((keyword, i) => ({
+    rank: i + 1,
+    keyword,
     source: "youtube",
-    region,
-    fetchedAt: new Date().toISOString(),
-    mocked: true,
-    items: MOCK_TITLES.map((keyword, i) => ({
-      rank: i + 1,
-      keyword,
-      source: "youtube",
-      score: 100000 - i * 7000,
-    })),
-  };
+    score: 100000 - i * 7000,
+  }));
+}
+
+export function getMockHackerNewsItems(): TrendItem[] {
+  return MOCK_HACKERNEWS_TITLES.map((keyword, i) => ({
+    rank: i + 1,
+    keyword,
+    source: "hackernews",
+    score: 500 - i * 40,
+  }));
 }

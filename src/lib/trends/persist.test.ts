@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { extractKeywordHistory, isSnapshotFresh, TrendSnapshotRow } from "./persist";
+import {
+  extractKeywordHistory,
+  isSnapshotFresh,
+  parseSources,
+  serializeSources,
+  snapshotRowToResponse,
+  TrendSnapshotRow,
+} from "./persist";
 
 function snapshot(fetchedAt: string, items: TrendSnapshotRow["items"]): TrendSnapshotRow {
   return {
@@ -85,5 +92,31 @@ describe("extractKeywordHistory", () => {
 
   it("returns an empty array for an empty snapshot list", () => {
     expect(extractKeywordHistory([], "BIGBANG")).toEqual([]);
+  });
+});
+
+describe("source list serialization (reusing the pre-existing `source` text column)", () => {
+  it("round-trips multiple sources through the comma-joined string", () => {
+    const serialized = serializeSources(["youtube", "hackernews"]);
+    expect(serialized).toBe("youtube,hackernews");
+    expect(parseSources(serialized)).toEqual(["youtube", "hackernews"]);
+  });
+
+  it("round-trips a single source (matches pre-multi-source rows already in the DB)", () => {
+    expect(parseSources("youtube")).toEqual(["youtube"]);
+  });
+
+  it("snapshotRowToResponse parses an old single-source row into a one-element sources array", () => {
+    const row = snapshot("2026-08-24T12:00:00.000Z", [
+      { rank: 1, keyword: "BIGBANG", source: "youtube", score: 100 },
+    ]);
+
+    expect(snapshotRowToResponse(row).sources).toEqual(["youtube"]);
+  });
+
+  it("snapshotRowToResponse parses a blended row into both sources", () => {
+    const row: TrendSnapshotRow = { ...snapshot("2026-08-24T12:00:00.000Z", []), source: "youtube,hackernews" };
+
+    expect(snapshotRowToResponse(row).sources).toEqual(["youtube", "hackernews"]);
   });
 });

@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { fetchYoutubeTrends } from "@/lib/trends/youtube";
-import { getMockTrends } from "@/lib/trends/mock";
+import { buildTrendsResponse } from "@/lib/trends/ingest";
 import { getFreshTrendSnapshot, saveTrendSnapshot, snapshotRowToResponse } from "@/lib/trends/persist";
 import { normalizeRegion } from "@/lib/trends/regions";
 import { TrendsResponse } from "@/lib/trends/types";
@@ -33,7 +32,7 @@ export async function GET(req: NextRequest) {
   const region = normalizeRegion(req.nextUrl.searchParams.get("region"));
 
   // DB-first: serve a recent snapshot straight from Supabase when one
-  // exists, so normal page traffic never burns YouTube quota. Falls
+  // exists, so normal page traffic never re-fetches every source. Falls
   // through to a live fetch on cold start or when Supabase is unconfigured
   // (getFreshTrendSnapshot resolves to null in both cases).
   const cached = await getFreshTrendSnapshot(region);
@@ -41,20 +40,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.json(snapshotRowToResponse(cached));
   }
 
-  if (!process.env.YOUTUBE_API_KEY) {
-    const trends = getMockTrends(region);
-    persistInBackground(trends);
-    return NextResponse.json(trends);
-  }
-
-  try {
-    const trends = await fetchYoutubeTrends(region);
-    persistInBackground(trends);
-    return NextResponse.json(trends);
-  } catch (err) {
-    console.error("Failed to fetch YouTube trends, falling back to mock", err);
-    const trends = getMockTrends(region);
-    persistInBackground(trends);
-    return NextResponse.json(trends);
-  }
+  // buildTrendsResponse fetches + blends every source (YouTube, Hacker
+  // News) and never throws — each source degrades to mock data
+  // independently on failure. See src/lib/trends/ingest.ts.
+  const trends = await buildTrendsResponse(region);
+  persistInBackground(trends);
+  return NextResponse.json(trends);
 }

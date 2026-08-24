@@ -2060,3 +2060,178 @@ POST /api/cron/refresh-trends (correct secret)                → HTTP 200
 HTML 직접 스캔 + rate-limit 회귀 확인까지 전부 그린. 실제 배포로 이어지는 병합이라 평소보다
 검증 범위를 넓혔음(HTML 파싱, 전체 로그 상태코드 재검사). `backend-loop`에 머지 커밋 후
 `main`으로 병합·푸시 예정.
+
+---
+
+## 반복 — 백엔드 (다중 소스: Hacker News 추가)
+
+> "인기 급상승 데이터"가 YouTube 전용이 아니라 진짜 다중 소스가 되어야 한다는 사용자 요청.
+> 오케스트레이터가 대안 조사(네이버 실검은 서비스 종료, Google Trends는 공식 API 없음)를
+> 마치고 Hacker News 공식 공개 API(무인증, 무료, 신규 크리덴셜 불필요)로 결정. `git merge main`
+> → 이미 최신(변경 없음).
+
+### [목표]
+1. `TrendSource`에 `"hackernews"` 추가, `src/lib/trends/hackernews.ts`를 `youtube.ts`와
+   같은 형태로 신설 — top stories 수집 → `TrendItem[]` 생성
+2. 점수 정규화를 신중하게 해결 — YouTube 조회수와 HN 포인트는 스케일이 완전히 다름. raw
+   magnitude로 이어붙여 정렬하면 한쪽이 항상 지배함. 공정한 블렌딩 방식(소스 내부 랭크
+   퍼센타일 정규화) 채택 + 근거와 기각한 대안을 로그에 기록
+3. 지역 모델과의 매핑을 의도적으로 결정(HN은 본질적으로 글로벌/영어권이라 "지역" 개념이 없음)
+4. cron 수집, DB-우선 `/api/trends` 경로, `trend_snapshots` 영속화 모두 다중 소스 스냅샷을
+   올바르게 처리 — 스냅샷의 `items`가 이제 블렌드를 담을 수 있고, 아이템별 `source`가 올바르게
+   출처를 표시
+5. 기존 테스트 갱신/확장, 전부 통과. lint/build 클린
+6. 실 검증: `/api/trends`를 curl해 아이템에 `source: "youtube"`와 `source: "hackernews"`가
+   진짜로 섞여 있음을 확인(한쪽만 있는 게 아니라)
+
+### [계획]
+1. **점수 정규화 설계 결정** — 기각한 대안: 두 소스를 그냥 이어붙이고 raw `score`로 정렬.
+   YouTube 조회수(수십만~수백만)와 HN 포인트(수십~수천)는 단위 자체가 다른데, raw 정렬은
+   YouTube가 항상 모든 슬롯을 차지하게 만듦 — 그날 HN에서 가장 좋은 글이라도 절대 노출되지
+   않음. **채택한 방식**: 소스 내부 랭크 퍼센타일 정규화. 각 소스에서 이미 매겨진 순위 r(전체
+   n개 중)을 `(n - r + 1) / n`으로 변환 — YouTube 1위와 HN 1위가 똑같이 1.0이 됨. 절대
+   크기가 아니라 "자기 소스 내에서 얼마나 잘했는가"로 경쟁시킴. 동점(퍼센타일 완전히 같음)은
+   안정 정렬로 입력 순서(youtube가 먼저 나열됨)가 이김 — 결정론적, 무작위 아님.
+2. **지역 매핑 설계 결정** — HN은 지역 개념이 없는 단일 글로벌 피드. 특정 지역에만 노출하면
+   자의적 결정이 됨(왜 US에만? 왜 KR엔 없어?). **채택**: 모든 지역에 동일한 HN 결과를
+   동등하게 블렌드 — KR/US/JP가 정확히 같은 HN 아이템을 받되, YouTube 부분만 지역별로 다름.
+   이건 "가짜 현지화"보다 정직한 선택이라 판단(실제로 지역화되지 않은 걸 지역화된 것처럼
+   보이지 않게 함).
+3. `TrendSource`에 `"hackernews"` 추가, `TrendsResponse.source: TrendSource`(단일) →
+   `sources: TrendSource[]`(배열)로 변경 — 블렌드된 응답에 "단일 출처"라는 필드는 이제
+   의미가 없고, 아이템별 `source`가 실제 귀속을 담당하므로 최상위 필드는 "이 응답에 블렌드된
+   소스 목록" 메타데이터로 재정의. `grep`으로 프론트엔드가 `data.source`(최상위)를 직접
+   읽는 곳이 있는지 먼저 확인 — 없음을 확인(있는 건 `history.ts`의 로우 레벨 `source: string`
+   타입가드뿐인데 이건 여전히 `typeof === "string"`만 검사해 값 포맷 변경에 영향 안 받음).
+4. `src/lib/trends/hackernews.ts` 신설 — `aggregateHackerNewsItems`(순수 함수,
+   `youtube.ts`의 `aggregateTrendItems`와 동일한 패턴: 네트워크/env 의존 없음, fixture로
+   테스트 가능) + `fetchHackerNewsItems()`(네트워크: `topstories.json` → 상위 30개
+   `item/{id}.json` 병렬 조회 → 집계). HN은 무인증 무료 API라 YouTube처럼 "키 없으면 mock"
+   분기가 없음 — 항상 실 fetch를 시도. 개별 스토리 조회 실패는 배치 전체를 실패시키지 않고
+   그 스토리만 제외(부분 성능 저하), `topstories.json` 자체 실패나 전체 조회 실패 시에만 throw
+5. `src/lib/trends/blend.ts` 신설 — `blendTrendItems(sourceLists, limit)` 순수 함수, 위
+   1번의 퍼센타일 로직 구현
+6. `src/lib/trends/ingest.ts` 신설 — `buildTrendsResponse(region)`: 두 소스를
+   `Promise.all`로 병렬 fetch(각각 실패 시 자체적으로 mock으로 폴백, 절대 throw 안 함) →
+   블렌드 → 최종 `TrendsResponse` 조립. `mocked`는 **OR**(소스 중 하나라도 mock이면 전체
+   `mocked: true`) — 일부만 가짜인데 "진짜"라고 표시하는 것보다 정직한 신호가 우선이라 판단
+7. `src/lib/trends/youtube.ts`: `fetchYoutubeTrends(region): TrendsResponse` →
+   `fetchYoutubeItems(region): TrendItem[]`로 개명/축소 — 이제 응답 조립은 `ingest.ts`가
+   전담하므로 소스별 fetcher는 아이템만 반환하면 됨. `aggregateTrendItems`(순수 함수)는 무변경
+   — `youtube.test.ts`가 그것만 테스트해서 안전
+8. `src/lib/trends/mock.ts`: `getMockTrends(region): TrendsResponse`(단일 응답 전체) →
+   `getMockYoutubeItems()`/`getMockHackerNewsItems()`(소스별 순수 아이템 배열)로 분리
+9. `src/lib/trends/persist.ts`: `source text not null` 컬럼을 스키마 변경 없이 재활용 —
+   `serializeSources(sources)`가 콤마 조인 문자열로 저장(`"youtube,hackernews"`),
+   `parseSources(value)`가 다시 배열로 파싱. 기존에 이미 저장된 단일 소스 행("youtube")도
+   콤마 없이 그대로 스플릿하면 1개짜리 배열이 되어 무중단 하위호환 — **이번 라운드는 새
+   마이그레이션이 전혀 필요 없음**(라이브 DB 승인 대기 없이 오늘 바로 배포 가능)
+10. `/api/trends/route.ts`, cron route 둘 다 `buildTrendsResponse(region)` 호출로
+    단순화 — 각 라우트에 중복돼 있던 mock-폴백/try-catch 로직이 `ingest.ts`로 집중되어
+    라우트 코드 자체가 더 짧아짐(리팩터링이자 기능 추가)
+11. 신규 유닛 테스트: `hackernews.test.ts`(5개), `blend.test.ts`(5개, 특히 "raw magnitude가
+    이겨서는 안 된다"를 실측 스케일 차이로 직접 증명하는 테스트 포함), `ingest.test.ts`(5개,
+    소스별 fetch/mock-폴백/OR-mocked 로직을 모킹으로 검증), `persist.test.ts`에 소스
+    직렬화 왕복 테스트 4개 추가
+12. `npm run lint/test/build` → dev 서버 + 실 크리덴셜로 cron 강제 갱신 후 `/api/trends`
+    curl해 진짜 블렌드 확인, 지역별 HN 동일성/YouTube 지역별 차이 확인
+
+### [실행 + 관찰]
+
+**신규 파일**
+- `src/lib/trends/hackernews.ts`, `hackernews.test.ts`
+- `src/lib/trends/blend.ts`, `blend.test.ts`
+- `src/lib/trends/ingest.ts`, `ingest.test.ts`
+
+**수정 파일**
+- `src/lib/trends/types.ts` — `TrendSource`에 `"hackernews"` 추가, `TrendsResponse.source`
+  → `sources: TrendSource[]`
+- `src/lib/trends/mock.ts` — 소스별 순수 아이템 생성 함수로 재작성
+- `src/lib/trends/youtube.ts` — `fetchYoutubeTrends` → `fetchYoutubeItems`, 반환 타입
+  `TrendsResponse` → `TrendItem[]`
+- `src/lib/trends/persist.ts` — `serializeSources`/`parseSources` 추가(export, 순수 함수),
+  insert/read 경로에 적용
+- `src/app/api/trends/route.ts`, `src/app/api/cron/refresh-trends/route.ts` —
+  `buildTrendsResponse` 사용으로 단순화
+
+**예상치 못했던 빌드 실패 → 최소 수정**: `npm run build`가 `src/app/page.test.tsx(33,3)`에서
+타입 에러로 실패 — 프론트엔드 테스트 픽스처가 옛 `TrendsResponse` 스키마(`source: "youtube"`
+단일 필드)를 하드코딩하고 있었음. 이건 이번 라운드가 만든 계약 변경(`source`→`sources`)의
+직접적 결과이고, `history.ts`/`watchlist.ts` 때처럼 "다음 프론트 라운드가 알아서 조정"하기엔
+지금 이 워크트리 자체의 `npm run build`가 막혀 성공 기준 5("lint/build 클린")를 충족할 수
+없었음. 프론트엔드 영역을 원칙적으로 건드리지 않는다는 관례와, 성공 기준을 실제로 충족해야
+한다는 요구 사이에서, **1줄짜리 순수 기계적 수정**(`source: "youtube"` →
+`sources: ["youtube"]`, `page.test.tsx:33`)이라 직접 고침 — 디자인/UX 판단이 필요한 변경이
+아니라 타입 시그니처만 맞추는 것이었기 때문. 수정 후 `npm run build`/`npm run test` 재실행해
+회귀 없음 확인. 오케스트레이터에게 명확히 보고 필요(아래 참고).
+
+**`npm run lint`** → 빈 출력, exit 0
+
+**`npm run test`**
+```
+Test Files  9 passed (9)
+     Tests  66 passed (66)
+```
+47(기존) + 19(신규: hackernews 5 + blend 5 + ingest 5 + persist 소스 직렬화 4) = 66
+
+**`npm run build`** → (픽스처 수정 후) 클린, 동일 9개 라우트 정상 생성
+
+**dev 서버(`:3001`, 실 크리덴셜) 실측 — cron 강제 갱신 후 확인**
+```
+POST /api/cron/refresh-trends → 3개 지역 전부 mocked:false, sources:["youtube","hackernews"]
+```
+`/api/trends?region=KR` 실제 응답의 아이템 20개를 순위대로 나열:
+```
+rank 1  [youtube   ]  score=1097614   HYBE
+rank 2  [hackernews]  score=999       How Europe is killing makers and micro-entrepreneurs
+rank 3  [youtube   ]  score=1097614   HYBE LABELS
+rank 4  [hackernews]  score=684       Xiaomi: New CPU matches Apple cores...
+... (youtube/hackernews가 정확히 번갈아 나타남, rank 20까지) ...
+```
+YouTube 점수가 백만 단위, HN 점수가 수백 단위인데도 두 소스가 깨끗하게 인터리브됨 —
+퍼센타일 블렌딩이 실 데이터로도 의도대로 동작함을 실측으로 증명(라운드 계획에서 세운
+가설이 실제 프로덕션 데이터로 재현됨).
+
+**지역 매핑 결정 실측 검증**: KR/US/JP 3개 지역의 HN 아이템 상위 3개를 비교 → **완전히
+동일**("How Europe is killing makers...", "Xiaomi: New CPU...", "MS Paint and Photos..."
+순서까지 동일). YouTube 아이템은 지역별로 다름(KR은 한국어 콘텐츠, US는 "GTA 6 Build
+Leak" 등 영어권 콘텐츠) — 설계 의도(HN 글로벌 공유, YouTube 지역별)가 실제로 그렇게
+동작함을 확인.
+
+**`/api/trends/history?region=KR&limit=1`**: 저장된 로우의 `source` 컬럼이 실제로
+`"youtube,hackernews"`(콤마 조인 문자열)로 저장되어 있음을 확인, `mocked:false`,
+`items`의 소스 집합이 `{hackernews, youtube}` — 새 마이그레이션 없이 기존 컬럼 재활용이
+실제로 동작함을 라이브 DB에서 확인.
+
+**`/api/trends/keyword-history?keyword=HYBE&region=KR`**: 기존 라우트도 무변경으로 정상
+동작(YouTube 키워드의 히스토리 포인트 정상 반환) — 다중 소스 도입이 기존 기능을 깨지
+않음을 확인.
+
+**기타 라우트 회귀 확인**: `/`(200), `/api/watchlist`(401), `/auth/callback`(307) 전부
+정상. dev 로그에 이미 알려진 클래스(`PGRST`, `rate_limited`) 외 예상 밖 에러 없음. 서버
+종료 후 포트 확인 → 정상 종료.
+
+### [검증] — 성공 기준 대조
+1. `TrendSource`에 `"hackernews"` 추가, `hackernews.ts`가 `youtube.ts`와 동일한 형태로
+   신설 → **충족**
+2. 점수 정규화(랭크 퍼센타일) + 근거/기각 대안 로그 기록 → **충족**, 실 데이터로 인터리브
+   실측 확인
+3. 지역 매핑 의도적 결정(HN 글로벌 공유) + 로그 기록 → **충족**, 3개 지역 HN 동일성 실측
+   확인
+4. cron/DB-우선/영속화 모두 다중 소스 스냅샷 정상 처리, 아이템별 `source` 정확한 귀속 →
+   **충족**, 새 마이그레이션 불필요(기존 컬럼 재활용) 확인
+5. 기존 테스트 갱신/확장 66개 전부 통과, lint/build 클린 → **충족**(프론트 픽스처 1줄
+   수정 포함, 아래 참고에 명시)
+6. 실 curl로 `source: "youtube"`/`"hackernews"` 진짜 혼재 확인 → **충족**, rank 1~20까지
+   정확히 번갈아 나타남을 실측
+
+### [개선/반복]
+1회 반복으로 6개 성공 기준 모두 실측 충족. 추가 반복 불필요(규칙 9).
+
+### [종료]
+6개 성공 기준 전부 실측 증거로 충족, 새 마이그레이션 없이 오늘 바로 배포 가능한 상태.
+**오케스트레이터에게 명시적으로 알릴 것**: 이번 라운드가 공유 타입 `TrendsResponse`의
+최상위 `source` 필드를 `sources`(배열)로 바꾸는 하위호환 깨지는 변경을 포함 — 빌드를
+그린으로 유지하기 위해 `page.test.tsx`의 픽스처 1줄을 직접 고쳤음(디자인 판단 아닌 기계적
+타입 수정). 프론트엔드가 최상위 `data.source`를 직접 읽는 곳은 없음을 grep으로 사전
+확인했으나, 프론트 트랙이 이 필드명 변경을 알고 있어야 향후 자체 작업에서 참고 가능.
