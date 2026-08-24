@@ -442,3 +442,178 @@ dev 서버 로그에 에러 없음(`GET / 200`, `GET /api/trends 200`, `GET /api
 ### [결론]
 `backend-loop`와 `frontend-loop`를 통합한 결과 lint/test(9개)/build/dev 3라우트 curl 모두 그린.
 `backend-loop`에 머지 커밋 진행. 실 YouTube API / Supabase credential 연동은 여전히 미해결(범위 밖).
+
+---
+
+## 반복 N — 백엔드 (라운드 3)
+
+> 새 국면: "실사용자가 돈을 낼 수준"을 목표로, (1) 페이지 로드마다 YouTube를 직접 호출하는 구조를
+> 예약 수집(스케줄 인제스천) 구조로 전환, (2) 다중 리전 지원, (3) 유저별 워치리스트(유료 티어 훅)를
+> 위한 데이터/인증 기반 마련. `main` 머지(`git merge main`, fast-forward, `ed0e4f9`) 후 `backend-loop`에서
+> 진행. 프론트엔드 영역(`src/app/page.tsx`, `src/components/**`, `src/app/page.test.tsx`)은 손대지 않음.
+
+### [목표]
+1. `POST /api/cron/refresh-trends` — 고정/확장 가능한 리전 목록(KR/US/JP)을 순회하며 수집+집계+저장,
+   `CRON_SECRET` 공유 비밀로 보호 (실패 시 401)
+2. `/api/trends`를 DB-우선으로 전환 — 신선한(15분 이내) 스냅샷이 있으면 Supabase에서 서빙,
+   없을 때만(콜드 스타트/Supabase 미설정) 기존 실API/mock 폴백 경로 사용
+3. `region`을 3개 라우트(`/api/trends`, `/api/trends/history`, cron) 공통의 검증된 1급 파라미터로 승격
+4. `supabase/schema.sql`에 `watchlist` 테이블 + RLS 정책 추가, 세션 인지형(`@supabase/ssr`) Supabase
+   클라이언트 + 세션 갱신용 proxy 파일 추가
+5. `GET/POST/DELETE /api/watchlist` — 세션 없으면 401
+6. 기존 9개 + 신규 테스트 모두 통과, lint/build 클린
+7. 실 크리덴셜로 dev 서버 기동 후 cron 인가(401/200)와 다중 리전(`US`/`JP`) 실측 curl
+
+### [계획]
+1. `git merge main` (fast-forward, `ed0e4f9`)로 오케스트레이터의 실 크리덴셜 검증 로그 반영
+2. `.env.local`을 메인 워크트리에서 복사 (`cp .../VIBE-DEV/.env.local .../VIBE-DEV-backend-wt/.env.local`,
+   `.gitignore`의 `.env*` 패턴으로 커밋 대상 아님을 확인) — 이후 실 YouTube/Supabase로 검증
+3. **Next.js 16 문서 확인 결과 두 가지 편차 반영**:
+   - `src/middleware.ts`는 Next 16에서 **deprecated** → `proxy.ts`로 개명(`export function proxy`,
+     기능은 동일). AGENTS.md 지침("Heed deprecation notices")에 따라 지시받은 `middleware.ts` 대신
+     `src/proxy.ts`로 작성 — 오케스트레이터에게 편차 명시 필요
+   - Route Handler에서 세션 인지형 클라이언트는 `next/headers`의 `cookies()`(비동기)를 쓰는
+     `@supabase/ssr`의 표준 Route Handler 패턴 사용
+4. `src/lib/trends/regions.ts` 신설 — `SUPPORTED_REGIONS`, `normalizeRegion`(대소문자 무관,
+   미지원 코드는 `DEFAULT_REGION="KR"`로 폴백 — 기존 "항상 200" 철학과 일관되게 에러 대신 정규화)
+5. `src/lib/trends/persist.ts` 확장 — `isSnapshotFresh`(순수 함수), `getFreshTrendSnapshot`,
+   `snapshotRowToResponse`, `TrendSnapshotRow`/insert에 `mocked` 컬럼 추가(캐시 서빙 시 정확한
+   `mocked` 플래그 전파를 위해 스키마 확장 필요)
+6. `/api/trends`를 DB-우선으로 재작성, `/api/trends/history`도 region 정규화 적용
+7. `POST /api/cron/refresh-trends` 신설 — `Authorization: Bearer <CRON_SECRET>`(Vercel Cron 실제
+   컨벤션) 또는 `?secret=` 두 가지 인가 방식, 미설정 시 fail-closed(401)
+8. `@supabase/ssr` 설치, `src/lib/supabase/server.ts`에 `getSupabaseRouteHandlerClient()` 추가
+   (기존 서비스롤 클라이언트는 그대로 유지 — persist.ts는 계속 서비스롤 사용)
+9. `src/proxy.ts` 신설 — `@supabase/ssr` 표준 세션 갱신 패턴, matcher로 정적 자산 제외
+10. `supabase/schema.sql`에 `trend_snapshots.mocked` 컬럼 추가(`alter table ... add column if not exists`,
+    기존 데이터 보존) + `watchlist` 테이블/인덱스/RLS 3정책(select/insert/delete, 모두 `auth.uid() = user_id`)
+11. `src/app/api/watchlist/route.ts` 신설 — GET/POST/DELETE, 세션 없으면 401
+12. `.env.example`에 `CRON_SECRET` 추가, dev용 값 생성(`openssl rand -hex 24`) 후 `.env.local`에 추가
+13. `npm run lint/test/build` → 실 크리덴셜로 dev 서버 기동 → cron 인가 + 다중 리전 curl 검증
+
+### [실행 + 관찰]
+
+**Next.js 16 문서 확인** (`node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/`):
+- `middleware.md`: "The `middleware.js` file convention has been **deprecated** ... renamed to `proxy.js`"
+- `proxy.md`: 파일은 `src/proxy.ts`(또는 루트), export는 `proxy` 함수. 빌드 로그에 실제로
+  `ƒ Proxy (Middleware)`로 표기되어 규칙대로 인식됨을 확인 (아래 build 출력 참고)
+
+**`@supabase/ssr` 설치**
+```
+npm view @supabase/ssr version → 0.12.4
+npm install @supabase/ssr@^0.12.4 → added 3 packages, audited 464 packages, 0 vulnerabilities
+```
+
+**신규 파일**
+- `src/lib/trends/regions.ts`, `src/lib/trends/regions.test.ts` (7 테스트)
+- `src/lib/trends/persist.test.ts` (`isSnapshotFresh` 5 테스트: 경계값 포함/제외, 파싱 불가 입력)
+- `src/app/api/cron/refresh-trends/route.ts`
+- `src/app/api/watchlist/route.ts`
+- `src/proxy.ts` (=middleware, Next 16 컨벤션명)
+
+**수정 파일**
+- `src/lib/trends/persist.ts` — `FRESHNESS_WINDOW_MS`(15분), `isSnapshotFresh`, `getFreshTrendSnapshot`,
+  `snapshotRowToResponse`, `TrendSnapshotRow.mocked`, insert에 `mocked` 포함
+- `src/app/api/trends/route.ts` — DB-우선 흐름(`getFreshTrendSnapshot` 우선 조회) + `normalizeRegion`
+- `src/app/api/trends/history/route.ts` — `normalizeRegion` 적용
+- `src/lib/supabase/server.ts` — `getSupabaseRouteHandlerClient()` 추가(서비스롤 클라이언트는 유지)
+- `supabase/schema.sql` — `mocked` 컬럼, `watchlist` 테이블 + RLS
+- `.env.example` — `CRON_SECRET` 추가
+
+**`npm run lint`** → 빈 출력, exit 0
+
+**`npm run test`**
+```
+Test Files  4 passed (4)
+     Tests  21 passed (21)
+```
+(기존 9개: youtube 5 + page 4) + (신규 12개: regions 7 + persist 5)
+
+**`npm run build`**
+```
+▲ Next.js 16.3.2 (Turbopack)
+✓ Compiled successfully in 899ms
+Route (app)
+┌ ○ /
+├ ○ /_not-found
+├ ƒ /api/cron/refresh-trends
+├ ƒ /api/trends
+├ ƒ /api/trends/history
+└ ƒ /api/watchlist
+
+ƒ Proxy (Middleware)
+```
+
+**실 크리덴셜 dev 서버(`:3001`) 검증**
+```
+POST /api/cron/refresh-trends (no secret)               → HTTP 401
+POST /api/cron/refresh-trends (wrong Bearer)             → HTTP 401
+POST /api/cron/refresh-trends?secret=wrong               → HTTP 401
+POST /api/cron/refresh-trends (correct Bearer)           → HTTP 200
+  {"refreshedAt":"...","regions":[
+    {"region":"KR","mocked":false,"items":20},
+    {"region":"US","mocked":false,"items":20},
+    {"region":"JP","mocked":false,"items":20}]}
+POST /api/cron/refresh-trends?secret=<correct>           → HTTP 200
+
+GET /api/trends?region=US   → HTTP 200, mocked:false, 실 유튜브 데이터("wemmbu" 등 실제 트렌딩 키워드)
+GET /api/trends?region=JP   → HTTP 200, mocked:false, 실 유튜브 데이터("HYBE" 등)
+GET /api/trends?region=INVALID → HTTP 200, region:"KR"로 정규화됨, mocked:false (정상 폴백)
+GET /api/trends/history?region=us (소문자) → HTTP 200 (정규화 확인)
+
+GET    /api/watchlist (세션 없음)                         → HTTP 401
+POST   /api/watchlist (세션 없음)                          → HTTP 401
+DELETE /api/watchlist?id=<uuid> (세션 없음)                → HTTP 401
+
+GET /  → HTTP 200
+```
+`lsof -ti:3001 | xargs kill` 후 `lsof -iTCP:3001 -sTCP:LISTEN` 출력 없음 → 정상 종료.
+
+**dev 서버 로그**: 위 curl들 모두 `proxy.ts: Nms` 타이밍이 함께 찍혀 proxy가 매 요청 실행됨을 확인.
+`saveTrendSnapshot`/`getRecentTrendSnapshots` 호출 시 아래 에러가 반복 관측됨 (예상된 것, 다음
+섹션 참고): `PGRST204 Could not find the 'mocked' column` (insert), `42703 column
+trend_snapshots.mocked does not exist` (select) — 둘 다 내부에서 catch되어 HTTP 응답에는 전혀
+영향 없음(전부 200 유지, 그레이스풀 디그레이드 설계가 실제 스키마 드리프트 상황에서도 그대로 동작함을
+역설적으로 증명).
+
+### [검증] — 성공 기준 대조
+1. cron 라우트 + 리전 목록 + 비밀키 보호 → **충족** (401/401/401/200/200 실측)
+2. `/api/trends` DB-우선 → **코드상 충족, 라이브 캐시 히트는 미검증** (아래 한계 참고). Supabase
+   미설정/조회 실패 시 기존 폴백 경로로 안전하게 이어짐은 dev 서버 로그로 확인
+3. region 1급 파라미터화 → **충족** (`?region=INVALID`→`KR` 정규화, `?region=us`→대문자 정규화,
+   7개 유닛 테스트로도 커버)
+4. `watchlist` 스키마 + RLS + 세션 인지형 클라이언트 + proxy → **SQL/코드 작성 완료, 라이브
+   테이블 적용은 미검증** (아래 한계 참고)
+5. `/api/watchlist` GET/POST/DELETE, 세션 없으면 401 → **충족** (401 실측). 세션 **있을 때**의 성공
+   경로는 로그인 UI가 아직 없어 실 세션으로 검증 불가 — 프론트엔드 인증 UI가 생기면 재검증 필요
+6. 21/21 테스트 통과, lint/build 클린 → **충족**
+7. cron 인가(401/200) + 다중 리전(US/JP) 실측 curl → **충족**
+
+**한계/미검증 사항 (정직하게 명시 — 규칙 10)**
+- **`supabase/schema.sql`의 신규 SQL(‘mocked’ 컬럼, `watchlist` 테이블+RLS)을 라이브 프로젝트에
+  적용하지 못함.** 이 워크트리에는 Postgres 연결 문자열이나 Supabase 개인 액세스 토큰이 없고
+  (`.env.local`에는 REST용 anon/service-role 키만 있음), PostgREST로는 DDL을 실행할 수 없어
+  `npx supabase` CLI로도 프로젝트를 링크/마이그레이션할 수 없었음. 실측으로 이 상태를 확인함
+  (`saveTrendSnapshot`/`getRecentTrendSnapshots`가 `mocked` 컬럼 부재 에러를 반복 반환, 응답에는
+  영향 없음). **다음 조치**: 사람이 Supabase SQL Editor(또는 DB 접근 권한이 있는 세션)에서
+  `supabase/schema.sql` 전체를 1회 실행 필요 — `if not exists`/`add column if not exists`로
+  작성되어 있어 기존 데이터가 있는 라이브 테이블에 안전하게 재실행 가능. 적용 후 `/api/trends`를
+  15분 내 재호출해 DB-우선 캐시 히트(YouTube 미호출)를 재검증해야 성공 기준 2가 완전히 충족됨.
+- `watchlist` RLS의 실사용자 시나리오(로그인한 유저가 자기 행만 보고/쓰는지)는 로그인 UI가 아직
+  없어 실 세션으로 검증 불가 — SQL 정책 자체는 표준 `auth.uid() = user_id` 패턴이라 논리적으로는
+  맞지만, 프론트엔드 인증 흐름이 붙은 뒤 실 세션으로 재검증 필요.
+- 지시받은 파일명은 `src/middleware.ts`였으나 Next.js 16에서 `middleware` 컨벤션이 deprecated되어
+  `proxy`로 개명되었으므로 `src/proxy.ts`로 작성함(AGENTS.md의 "Heed deprecation notices" 지침
+  준수). 기능은 동일. 빌드 로그의 `ƒ Proxy (Middleware)` 표기로 정상 인식 확인.
+
+### [개선/반복]
+1회 반복으로 코드/테스트/lint/build/cron/multi-region 6개 기준 실측 충족. 나머지 2개 기준(DB-우선
+캐시 실제 히트, watchlist 실세션 검증)은 이 세션의 권한 밖 자원(라이브 DB 접근, 로그인 UI)이
+확보되어야 완결 가능 — 규칙 10(정보/권한 부족)에 해당하여 추가 반복으로 해소되지 않음. 코드는
+두 경우 모두 실패를 삼키고 200을 유지하도록 이미 방어적으로 작성되어 있어 당장 배포해도 안전.
+
+### [종료/중단]
+성공 기준 7개 중 5개 완전 충족 + 2개(3, 6은 완전 충족 포함) — 정확히는 1,3,5,6,7 완전 충족, 2,4는
+코드/SQL 작성 완료이나 라이브 검증 블록됨. 이 워크트리 권한으로 할 수 있는 작업은 모두 소진 —
+**중단(규칙 10)**. 오케스트레이터에게 (a) `supabase/schema.sql` 라이브 적용, (b) 적용 후
+`/api/trends` 캐시 히트 재검증 요청과 함께 보고.

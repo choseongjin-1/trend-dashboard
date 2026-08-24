@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getRecentTrendSnapshots } from "@/lib/trends/persist";
+import { normalizeRegion } from "@/lib/trends/regions";
 
 /**
  * GET /api/trends/history?region=KR&limit=20
@@ -11,7 +12,7 @@ import { getRecentTrendSnapshots } from "@/lib/trends/persist";
  * of surfacing an error to the client.
  */
 export async function GET(req: NextRequest) {
-  const region = req.nextUrl.searchParams.get("region") ?? "KR";
+  const region = normalizeRegion(req.nextUrl.searchParams.get("region"));
   const limitParam = req.nextUrl.searchParams.get("limit");
   const limit = limitParam ? Number(limitParam) : 20;
 

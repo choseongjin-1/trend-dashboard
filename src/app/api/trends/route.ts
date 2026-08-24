@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchYoutubeTrends } from "@/lib/trends/youtube";
 import { getMockTrends } from "@/lib/trends/mock";
-import { saveTrendSnapshot } from "@/lib/trends/persist";
+import { getFreshTrendSnapshot, saveTrendSnapshot, snapshotRowToResponse } from "@/lib/trends/persist";
+import { normalizeRegion } from "@/lib/trends/regions";
 import { TrendsResponse } from "@/lib/trends/types";
 
 /**
@@ -17,7 +18,16 @@ function persistInBackground(trends: TrendsResponse) {
 }
 
 export async function GET(req: NextRequest) {
-  const region = req.nextUrl.searchParams.get("region") ?? "KR";
+  const region = normalizeRegion(req.nextUrl.searchParams.get("region"));
+
+  // DB-first: serve a recent snapshot straight from Supabase when one
+  // exists, so normal page traffic never burns YouTube quota. Falls
+  // through to a live fetch on cold start or when Supabase is unconfigured
+  // (getFreshTrendSnapshot resolves to null in both cases).
+  const cached = await getFreshTrendSnapshot(region);
+  if (cached) {
+    return NextResponse.json(snapshotRowToResponse(cached));
+  }
 
   if (!process.env.YOUTUBE_API_KEY) {
     const trends = getMockTrends(region);
