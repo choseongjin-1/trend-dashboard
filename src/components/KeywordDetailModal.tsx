@@ -31,7 +31,7 @@ export function KeywordDetailModal({ keyword, regionLabel, history, onClose }: K
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-lg rounded-sm border border-ink-dim/20 bg-casing p-6 shadow-[0_1px_0_rgba(255,255,255,0.6)_inset,0_10px_24px_rgba(34,31,26,0.15)]"
+        className="w-full max-w-lg rounded-sm border border-ink-dim/20 bg-casing p-6 shadow-[0_1px_0_rgba(255,255,255,0.6)_inset,0_10px_24px_rgba(24,27,30,0.15)]"
       >
         <div className="mb-1 flex items-start justify-between gap-4">
           <div className="min-w-0">

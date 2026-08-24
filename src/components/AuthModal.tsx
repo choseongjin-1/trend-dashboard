@@ -48,7 +48,7 @@ export function AuthModal({ open, error, onClose, onSignIn, onSignUp }: AuthModa
       <form
         onClick={(e) => e.stopPropagation()}
         onSubmit={handleSubmit}
-        className="w-full max-w-sm rounded-sm border border-ink-dim/20 bg-casing p-6 shadow-[0_1px_0_rgba(255,255,255,0.6)_inset,0_10px_24px_rgba(34,31,26,0.15)]"
+        className="w-full max-w-sm rounded-sm border border-ink-dim/20 bg-casing p-6 shadow-[0_1px_0_rgba(255,255,255,0.6)_inset,0_10px_24px_rgba(24,27,30,0.15)]"
       >
         <div className="mb-6 flex items-center justify-between">
           <h2 className="font-display text-xl text-ink">

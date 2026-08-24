@@ -210,7 +210,7 @@ export default function Home() {
               return (
                 <li
                   key={item.rank}
-                  className="flap-row flex items-center gap-3 rounded-sm border border-ink-dim/10 bg-casing px-3 py-2.5 shadow-[0_1px_0_rgba(255,255,255,0.5)_inset,0_1px_2px_rgba(34,31,26,0.08)]"
+                  className="flap-row flex items-center gap-3 rounded-sm border border-ink-dim/10 bg-casing px-3 py-2.5 shadow-[0_1px_0_rgba(255,255,255,0.5)_inset,0_1px_2px_rgba(24,27,30,0.08)]"
                   style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
                 >
                   <span className="w-6 text-right font-data text-base font-bold text-ink-dim">
