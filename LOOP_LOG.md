@@ -187,3 +187,44 @@ $ lsof -iTCP:3002 -sTCP:LISTEN   # (출력 없음 — 정상 종료 확인)
 
 ### [종료]
 성공 기준 6개 모두 실측 증거로 충족 확인. `frontend-loop` 브랜치에 커밋 진행.
+
+## 반복 2 — 프론트엔드 (백엔드 실계약 반영)
+
+### [배경]
+백엔드 트랙(`backend-loop`)이 `/api/trends/history`를 실제로 구현·커밋함
+(`src/app/api/trends/history/route.ts` + `src/lib/trends/persist.ts`). 반복 1에서
+`src/lib/trends/history.ts`에 추측으로 정의했던 스펙
+(`{ region, items: [{ keyword, history: [{ rank, fetchedAt }] }] }`)과 실제 응답이 달라
+계약 불일치가 발견됨.
+
+**실제 계약**: `GET /api/trends/history?region=KR&limit=20` → 항상 HTTP 200,
+스냅샷 행의 평탄한 JSON 배열 (`TrendSnapshotRow[]`, Supabase 미설정 시 `[]`).
+```ts
+interface TrendSnapshotRow {
+  id: string; source: string; region: string; fetched_at: string;
+  items: TrendItem[]; created_at: string; // TrendItem은 types.ts와 동일 (rank/keyword/source/score)
+}
+```
+
+### [수정]
+- `src/lib/trends/history.ts` 전면 수정: 타입가드(`isTrendsHistoryResponse`)를 배열-오브-스냅샷
+  구조로 재작성, 빈 배열 `[]`은 "스냅샷 0건"으로 정상 파싱(파싱 실패 아님)되도록 명시 처리
+- `toHistoryMap`: 스냅샷을 `fetched_at` 오름차순 정렬 후, 각 스냅샷의 `items`를 순회하며
+  키워드별 `{rank, fetchedAt}` 포인트를 누적하는 방식으로 재구현 (기존 `TrendHistoryPoint`,
+  `computeDelta`, UI 컴포넌트는 무변경 — 소비 인터페이스가 동일해 변경 범위가 작았음)
+- 스냅샷이 2건 미만이면 각 키워드 포인트도 자연히 1개 이하가 되어 `computeDelta`가 그대로
+  `null`을 반환 — "이력 없음"과 동일하게 처리됨(별도 분기 불필요)
+- `page.tsx`, `RankSparkline.tsx`, `page.test.tsx`는 변경 없음 (기존 로딩/에러/빈 상태/mocked
+  배너 동작 보존)
+
+### [검증]
+```
+npm run lint   → 통과 (에러/경고 없음)
+npm run test   → Test Files 1 passed (1), Tests 4 passed (4)
+npm run build  → Compiled successfully, TypeScript 통과, 라우트 정상 생성
+```
+반복 1의 4개 테스트가 그대로 통과 — 그 중 "malformed 이력 응답" 테스트(`{totally:"unexpected"}`,
+배열이 아님)가 새 배열 기반 타입가드에서도 여전히 거부되어 회귀 없음을 확인.
+
+### [종료]
+계약 불일치 수정 완료, lint/test/build 전부 그린. `frontend-loop`에 커밋.
