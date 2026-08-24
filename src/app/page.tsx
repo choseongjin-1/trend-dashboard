@@ -5,6 +5,7 @@ import { TrendsResponse } from "@/lib/trends/types";
 import { fetchTrendsHistory, toHistoryMap, computeDelta, TrendHistoryPoint } from "@/lib/trends/history";
 import { fetchKeywordHistory } from "@/lib/trends/keywordHistory";
 import { REGIONS, DEFAULT_REGION } from "@/lib/trends/regions";
+import { sourceLabel } from "@/lib/trends/sourceLabel";
 import { fetchWatchlist, addToWatchlist, removeFromWatchlist, WatchlistRow } from "@/lib/watchlist";
 import { useAuth } from "@/lib/auth/useAuth";
 import { RankDelta } from "@/components/RankDelta";
@@ -120,6 +121,10 @@ export default function Home() {
 
   const isEmpty = !!data && data.items.length === 0;
   const watchlistAvailable = !!auth.user && watchlist !== null;
+  // Show a per-item source tag only once it's actually informative — no
+  // point stamping "YouTube" on every row while that's the only source.
+  // The moment a second source starts flowing, this switches on by itself.
+  const hasMultipleSources = !!data && new Set(data.items.map((item) => item.source)).size > 1;
 
   return (
     <div className="min-h-screen bg-casing text-flap">
@@ -147,7 +152,7 @@ export default function Home() {
             </div>
           </div>
           <p className="mt-2 font-body text-xs text-flap-dim">
-            YouTube 인기 급상승 신호를 실시간으로 감지하는 키워드 보드
+            인기 급상승 신호를 실시간으로 감지하는 키워드 보드
           </p>
         </div>
       </div>
@@ -155,7 +160,7 @@ export default function Home() {
       <div className="mx-auto max-w-2xl px-6 py-6">
         {data?.mocked && (
           <div className="mb-4 rounded-sm border border-flap-dim/25 bg-panel px-3 py-2 text-sm text-flap-dim">
-            목업 데이터 표시 중입니다. YOUTUBE_API_KEY를 설정하면 실제 데이터로 전환됩니다.
+            목업 데이터 표시 중입니다. 실제 데이터가 연결되면 자동으로 전환됩니다.
           </div>
         )}
 
@@ -230,6 +235,11 @@ export default function Home() {
                   >
                     {item.keyword}
                   </button>
+                  {hasMultipleSources && (
+                    <span className="shrink-0 rounded-sm border border-flap-dim/20 px-1.5 py-0.5 font-data text-[10px] uppercase tracking-wide text-flap-dim">
+                      {sourceLabel(item.source)}
+                    </span>
+                  )}
                   {historyMap.size > 0 && (
                     <>
                       {history && <RankSparkline history={history} />}

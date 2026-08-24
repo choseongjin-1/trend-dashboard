@@ -287,4 +287,47 @@ describe("Home dashboard", () => {
     expect(within(dialog).getByText("아직 데이터가 충분하지 않습니다")).toBeInTheDocument();
     expect(within(dialog).queryByRole("img", { name: "키워드 순위 추이 차트" })).not.toBeInTheDocument();
   });
+
+  it("does not name YouTube specifically in user-facing copy", async () => {
+    render(<Home />);
+    await screen.findByText("가을 캠핑 브이로그");
+
+    expect(screen.queryByText(/YouTube/i)).not.toBeInTheDocument();
+  });
+
+  it("hides per-item source labels when every item shares one source", async () => {
+    render(<Home />);
+    await screen.findByText("가을 캠핑 브이로그");
+
+    expect(screen.queryByText("YouTube")).not.toBeInTheDocument();
+  });
+
+  it("shows a per-item source label once multiple sources are present", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input.toString();
+        if (url.includes("/api/trends/history")) {
+          return Promise.resolve(jsonResponse({ error: "not found" }, { ok: false, status: 404 }));
+        }
+        if (url.includes("/api/trends?region=")) {
+          const mixedSourceTrends = {
+            ...mockTrends,
+            items: [
+              { rank: 1, keyword: "가을 캠핑 브이로그", source: "youtube", score: 100000 },
+              { rank: 2, keyword: "Show HN: something", source: "hackernews", score: 500 },
+            ],
+          } as unknown as TrendsResponse;
+          return Promise.resolve(jsonResponse(mixedSourceTrends));
+        }
+        return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+      }),
+    );
+
+    render(<Home />);
+    await screen.findByText("가을 캠핑 브이로그");
+
+    expect(screen.getByText("YouTube")).toBeInTheDocument();
+    expect(screen.getByText("Hackernews")).toBeInTheDocument();
+  });
 });
