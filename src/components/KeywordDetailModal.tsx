@@ -31,19 +31,19 @@ export function KeywordDetailModal({ keyword, regionLabel, history, onClose }: K
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-lg rounded-sm border border-flap-dim/20 bg-panel p-6 shadow-[0_1px_0_rgba(255,255,255,0.04)_inset,0_10px_30px_rgba(0,0,0,0.5)]"
+        className="w-full max-w-lg rounded-sm border border-ink-dim/20 bg-casing p-6 shadow-[0_1px_0_rgba(255,255,255,0.6)_inset,0_10px_24px_rgba(34,31,26,0.15)]"
       >
         <div className="mb-1 flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <p className="font-data text-[11px] uppercase tracking-widest text-flap-dim">
+            <p className="font-data text-[11px] uppercase tracking-widest text-ink-dim">
               {regionLabel} · 순위 추이
             </p>
-            <h2 className="mt-1 truncate font-display text-xl text-flap">{keyword}</h2>
+            <h2 className="mt-1 truncate font-display text-xl text-ink">{keyword}</h2>
           </div>
           <button
             onClick={onClose}
             aria-label="닫기"
-            className="shrink-0 font-data text-flap-dim hover:text-flap"
+            className="shrink-0 font-data text-ink-dim hover:text-ink"
           >
             ✕
           </button>
@@ -51,12 +51,12 @@ export function KeywordDetailModal({ keyword, regionLabel, history, onClose }: K
 
         {hasEnoughData ? (
           <>
-            <div className="mt-4 flex flex-wrap gap-x-5 gap-y-1 font-data text-xs text-flap-dim">
+            <div className="mt-4 flex flex-wrap gap-x-5 gap-y-1 font-data text-xs text-ink-dim">
               <span>
-                현재 <strong className="text-flap">{currentRank}위</strong>
+                현재 <strong className="text-ink">{currentRank}위</strong>
               </span>
               <span>
-                최고 <strong className="text-flap">{bestRank}위</strong>
+                최고 <strong className="text-ink">{bestRank}위</strong>
               </span>
               <span>스냅샷 {points.length}개</span>
             </div>
@@ -65,12 +65,12 @@ export function KeywordDetailModal({ keyword, regionLabel, history, onClose }: K
             </div>
           </>
         ) : isLoading ? (
-          <div className="mt-6 h-[200px] animate-pulse rounded-sm bg-casing/60" />
+          <div className="mt-6 h-[200px] animate-pulse rounded-sm bg-paper/60" />
         ) : (
-          <div className="mt-6 flex flex-col items-center gap-3 rounded-sm border border-dashed border-flap-dim/25 px-4 py-12 text-center">
+          <div className="mt-6 flex flex-col items-center gap-3 rounded-sm border border-dashed border-ink-dim/25 px-4 py-12 text-center">
             <EmptyFlaps />
-            <p className="text-sm font-medium text-flap">아직 데이터가 충분하지 않습니다</p>
-            <p className="text-xs text-flap-dim">스냅샷이 2개 이상 쌓이면 추이가 표시됩니다.</p>
+            <p className="text-sm font-medium text-ink">아직 데이터가 충분하지 않습니다</p>
+            <p className="text-xs text-ink-dim">스냅샷이 2개 이상 쌓이면 추이가 표시됩니다.</p>
           </div>
         )}
       </div>

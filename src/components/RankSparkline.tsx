@@ -50,9 +50,9 @@ export function RankSparkline({ history, width = 56, height = 20 }: RankSparklin
         strokeWidth={1.5}
         strokeLinecap="round"
         strokeLinejoin="round"
-        className="text-flap-dim"
+        className="text-ink-dim"
       />
-      <circle cx={last.x} cy={last.y} r={1.75} fill="currentColor" className="text-flap" />
+      <circle cx={last.x} cy={last.y} r={1.75} fill="currentColor" className="text-ink" />
     </svg>
   );
 }

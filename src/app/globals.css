@@ -1,29 +1,32 @@
 @import "tailwindcss";
 
 /*
- * FLIP design tokens — a split-flap departures-board system, not a
- * decorative "dark mode + one accent" palette. `casing`/`panel` are the
- * board's physical housing (a specific material reference, not a default),
- * `flap` is the printed-character cream used for ALL text and interactive/
- * brand color (buttons, active tab, focus, wordmark) — `rising`/`falling`
- * are reserved strictly for rank-delta status, never used decoratively
- * elsewhere. See LOOP_LOG.md round 7 for the full design plan and the
- * self-critique that led to this color-role split.
+ * FLIP design tokens — light theme, round 9. Grounded in a different real
+ * member of the same split-flap family than round 7's dark theme: a
+ * consumer desktop flip clock/calendar (ivory plastic housing, printed
+ * cards, dark ink), not an inverted airport departures board — those are
+ * dark by physical necessity (the flap slot needs a dark backing for the
+ * card to read), so a straight light/dark flip would depict an object that
+ * doesn't really exist. `paper`/`casing` are the housing/card materials,
+ * `ink` carries ALL text and interactive/brand color, `rising`/`falling`
+ * are reserved strictly for rank-delta status (ledger-stamp green / printed
+ * red-letter-day red) — never used decoratively elsewhere. See LOOP_LOG.md
+ * round 9 for the full design plan, self-critique, and contrast checks.
  */
 :root {
-  --casing: #0e0e10;
-  --panel: #1c1b1e;
-  --flap: #f2ecdd;
-  --flap-dim: #8b887e;
-  --rising: #e8b23d;
-  --falling: #c4544a;
+  --paper: #efeae0;
+  --casing: #e1d9c8;
+  --ink: #221f1a;
+  --ink-dim: #615a4f;
+  --rising: #2f6b4f;
+  --falling: #a23b2e;
 }
 
 @theme inline {
+  --color-paper: var(--paper);
   --color-casing: var(--casing);
-  --color-panel: var(--panel);
-  --color-flap: var(--flap);
-  --color-flap-dim: var(--flap-dim);
+  --color-ink: var(--ink);
+  --color-ink-dim: var(--ink-dim);
   --color-rising: var(--rising);
   --color-falling: var(--falling);
   --font-display: var(--font-display);
@@ -32,8 +35,8 @@
 }
 
 body {
-  background: var(--casing);
-  color: var(--flap);
+  background: var(--paper);
+  color: var(--ink);
   font-family: var(--font-body), "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
 }
 
