@@ -1,5 +1,32 @@
 # 루프 엔지니어링 로그
 
+## 실 크리덴셜 통합 검증 (오케스트레이터, main)
+
+**배경**: 사용자가 YouTube API 키 + Supabase 프로젝트 크리덴셜을 `.env.local`에 설정 완료.
+
+**관찰 1**: `/api/trends` → `mocked:false`, 실제 유튜브 트렌딩 데이터 정상 수신.
+`/api/trends/history` → `[]` (비어있음), 로그에 `saveTrendSnapshot`/`getRecentTrendSnapshots`
+둘 다 `PGRST125 Invalid path specified in request URL` 에러.
+
+**원인**: `.env.local`의 `NEXT_PUBLIC_SUPABASE_URL`이 Supabase "Data API" 설정 화면의
+REST 엔드포인트(`https://xxx.supabase.co/rest/v1/`)로 설정되어 있었음. Supabase JS 클라이언트가
+`/rest/v1/...` 경로를 자체적으로 붙이기 때문에 경로가 중복되어 무효화됨.
+
+**조치**: `.env.local`의 값을 프로젝트 베이스 URL(`https://xxx.supabase.co`, 경로 없음)로 수정.
+(코드 변경 아님 — 로컬 환경설정 값 수정)
+
+**관찰 2 (수정 후)**: 서버 재기동 후 `/api/trends` → `mocked:false` 정상,
+`/api/trends/history` → 방금 저장된 스냅샷 1건 정상 반환 (id/source/region/fetched_at/items 스키마 일치).
+
+**검증**: 성공 기준 전체 충족 확인 —
+1. YouTube 실 API 연동 정상 (mocked:false)
+2. Supabase 저장 정상 (insert 성공, 에러 없음)
+3. `/api/trends/history`가 실제 저장된 스냅샷을 스키마대로 반환
+4. 프론트엔드 델타/스파크라인 로직은 스냅샷이 2개 이상 쌓이면 자동으로 활성화됨 (코드상 확인됨, 시간 경과 후 재확인 필요)
+
+**남은 것**: Supabase `trend_snapshots` 테이블에 스냅샷이 계속 쌓이는지, 배포(Vercel) 설정은 아직 미확인.
+
+
 ## 프로젝트: 실시간 인기 키워드/해시태그 랭킹 대시보드
 
 ### 목표
