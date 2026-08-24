@@ -50,32 +50,32 @@ export function AuthModal({ open, error, onClose, onSignIn, onSignUp }: AuthModa
         onSubmit={handleSubmit}
         className="w-full max-w-sm rounded-lg border border-hairline bg-surface p-6"
       >
-        <div className="mb-5 flex items-center justify-between">
-          <h2 className="font-display text-lg font-bold text-text">
+        <div className="mb-6 flex items-center justify-between">
+          <h2 className="font-display text-xl font-black tracking-tight text-text">
             {mode === "signin" ? "로그인" : "회원가입"}
           </h2>
           <button
             type="button"
             onClick={onClose}
             aria-label="닫기"
-            className="text-text-dim hover:text-text"
+            className="font-data text-text-dim hover:text-signal"
           >
             ✕
           </button>
         </div>
 
-        <label className="mb-3 block text-xs text-text-dim">
+        <label className="mb-4 block font-data text-[11px] uppercase tracking-widest text-text-dim">
           이메일
           <input
             type="email"
             required
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="mt-1 w-full rounded-md border border-hairline bg-bg px-3 py-2 text-sm text-text outline-none focus:border-signal/60"
+            className="mt-1.5 w-full border-0 border-b border-hairline bg-transparent px-0.5 py-1.5 font-data text-sm text-text outline-none focus:border-b-2 focus:border-signal"
           />
         </label>
 
-        <label className="mb-4 block text-xs text-text-dim">
+        <label className="mb-5 block font-data text-[11px] uppercase tracking-widest text-text-dim">
           비밀번호
           <input
             type="password"
@@ -83,7 +83,7 @@ export function AuthModal({ open, error, onClose, onSignIn, onSignUp }: AuthModa
             minLength={6}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="mt-1 w-full rounded-md border border-hairline bg-bg px-3 py-2 text-sm text-text outline-none focus:border-signal/60"
+            className="mt-1.5 w-full border-0 border-b border-hairline bg-transparent px-0.5 py-1.5 font-data text-sm text-text outline-none focus:border-b-2 focus:border-signal"
           />
         </label>
 
