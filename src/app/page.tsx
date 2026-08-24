@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { TrendsResponse } from "@/lib/trends/types";
 import { fetchTrendsHistory, toHistoryMap, computeDelta, TrendHistoryPoint } from "@/lib/trends/history";
 import { REGIONS, DEFAULT_REGION } from "@/lib/trends/regions";
-import { fetchWatchlist, addToWatchlist, removeFromWatchlist } from "@/lib/watchlist";
+import { fetchWatchlist, addToWatchlist, removeFromWatchlist, WatchlistRow } from "@/lib/watchlist";
 import { useAuth } from "@/lib/auth/useAuth";
 import { RankDelta } from "@/components/RankDelta";
 import { RankSparkline } from "@/components/RankSparkline";
@@ -24,7 +24,7 @@ export default function Home() {
   const auth = useAuth();
   const [authModalOpen, setAuthModalOpen] = useState(false);
   // null = watchlist feature unavailable (logged out, or the API failed) — hide its UI entirely.
-  const [watchlist, setWatchlist] = useState<string[] | null>(null);
+  const [watchlist, setWatchlist] = useState<WatchlistRow[] | null>(null);
 
   const load = useCallback(async (targetRegion: string) => {
     setLoading(true);
@@ -64,30 +64,38 @@ export default function Home() {
       return;
     }
     let cancelled = false;
-    fetchWatchlist().then((keywords) => {
-      if (!cancelled) setWatchlist(keywords);
+    fetchWatchlist().then((rows) => {
+      if (!cancelled) setWatchlist(rows);
     });
     return () => {
       cancelled = true;
     };
   }, [auth.user]);
 
+  // A keyword can be tracked per-region, so "watched" for the currently
+  // displayed list means an entry matching both keyword and active region.
   const toggleWatch = useCallback(
     async (keyword: string) => {
       if (watchlist === null) return;
-      const isWatched = watchlist.includes(keyword);
-      const ok = isWatched ? await removeFromWatchlist(keyword) : await addToWatchlist(keyword);
-      if (!ok) return;
-      setWatchlist((prev) =>
-        prev === null
-          ? prev
-          : isWatched
-            ? prev.filter((k) => k !== keyword)
-            : [...prev, keyword],
-      );
+      const existing = watchlist.find((w) => w.keyword === keyword && w.region === region);
+      if (existing) {
+        const ok = await removeFromWatchlist(existing.id);
+        if (!ok) return;
+        setWatchlist((prev) => (prev === null ? prev : prev.filter((w) => w.id !== existing.id)));
+      } else {
+        const created = await addToWatchlist(keyword, region);
+        if (!created) return;
+        setWatchlist((prev) => (prev === null ? prev : [...prev, created]));
+      }
     },
-    [watchlist],
+    [watchlist, region],
   );
+
+  const removeWatchlistEntry = useCallback(async (id: string) => {
+    const ok = await removeFromWatchlist(id);
+    if (!ok) return;
+    setWatchlist((prev) => (prev === null ? prev : prev.filter((w) => w.id !== id)));
+  }, []);
 
   const isEmpty = !!data && data.items.length === 0;
   const watchlistAvailable = !!auth.user && watchlist !== null;
@@ -166,14 +174,18 @@ export default function Home() {
           </div>
         )}
 
-        {watchlistAvailable && <WatchlistPanel keywords={watchlist ?? []} onRemove={toggleWatch} />}
+        {watchlistAvailable && (
+          <WatchlistPanel entries={watchlist ?? []} onRemove={removeWatchlistEntry} />
+        )}
 
         {data && !isEmpty && (
           <ol className="divide-y divide-hairline rounded-md border border-hairline">
             {data.items.map((item) => {
               const history = historyMap.get(item.keyword);
               const delta = computeDelta(history);
-              const isWatched = watchlistAvailable && (watchlist ?? []).includes(item.keyword);
+              const isWatched =
+                watchlistAvailable &&
+                (watchlist ?? []).some((w) => w.keyword === item.keyword && w.region === region);
               return (
                 <li key={item.rank} className="flex items-center gap-4 px-4 py-3">
                   <span className="w-6 text-right font-data text-sm font-medium text-text-dim">

@@ -872,3 +872,97 @@ dev 로그 전수 확인 — `saveTrendSnapshot`/`getRecentTrendSnapshots`의 `m
 **여전히 미해결(범위 밖, 이전 라운드부터 이어짐)**: `supabase/schema.sql`의 `mocked` 컬럼/`watchlist`
 테이블이 라이브 프로젝트에 미적용 — 라이브 DB 접근 권한이 있는 세션의 1회 실행 필요.
 `backend-loop`에 머지 커밋 진행.
+
+---
+
+
+## 반복 4 — 프론트엔드 (워치리스트 실계약 반영)
+
+### [배경]
+반복 3에서 `src/lib/watchlist.ts`에 추측으로 정의한 계약(`{keywords: string[]}` GET,
+`{keyword}` 본문의 POST/DELETE)과 백엔드가 실제로 구현한 `/api/watchlist`
+(`src/app/api/watchlist/route.ts`, backend-loop)가 불일치함이 발견됨 — 반복 2의
+`history.ts` 계약 수정과 동일한 패턴.
+
+**실제 계약**:
+```
+GET    /api/watchlist            -> 200: WatchlistRow[] (id/keyword/region/created_at); 401 로그아웃 시
+POST   /api/watchlist  {keyword, region?} -> 201, 생성된 row 반환
+DELETE /api/watchlist?id=<uuid>  -> 200: {ok:true}  (id는 쿼리 파라미터, body 아님)
+```
+기존 구현의 실제 버그: (1) GET 응답 파싱이 배열이 아닌 `{keywords}` 형태를 기대해 항상 실패,
+(2) `addToWatchlist`가 region을 서버에 전달하지 않아 선택된 지역과 무관하게 서버 기본값(KR)로
+저장됨(단순 파싱 불일치가 아니라 실제 정합성 버그), (3) `removeFromWatchlist`가 keyword를
+body로 보내 항상 400 — 삭제는 row의 `id`가 필요하므로 keyword만으로는 식별 불가.
+
+### [수정]
+- `src/lib/watchlist.ts`: `WatchlistRow` 타입 신설 + 배열 응답 타입가드로 전면 재작성.
+  `addToWatchlist(keyword, region)`이 region을 함께 전송하고 생성된 row를 반환(낙관적 갱신 시
+  서버가 부여한 id를 바로 사용하기 위함). `removeFromWatchlist(id)`가 `?id=` 쿼리로 DELETE.
+- `page.tsx`: `watchlist` 상태를 `string[]`에서 `WatchlistRow[]`로 변경. `toggleWatch`가
+  keyword+현재 `region` 조합으로 기존 항목을 찾아 있으면 id로 삭제, 없으면
+  `addToWatchlist(keyword, region)` 호출 후 반환된 row를 상태에 추가. 랭킹 행의 별표(★/☆)
+  상태도 동일하게 keyword+region 매칭으로 판정(동일 키워드를 지역별로 별도 추적 가능하다는
+  실제 계약을 반영). 패널 전용 제거 함수 `removeWatchlistEntry(id)` 추가.
+- `WatchlistPanel.tsx`: `keywords: string[]` prop을 `entries: WatchlistRow[]`로 변경, 각 칩에
+  지역 태그를 함께 표시(동일 키워드가 여러 지역에 중복 추적될 수 있어 구분 필요), `onRemove`가
+  이제 keyword가 아닌 `id`를 받음.
+- `page.test.tsx`의 워치리스트 해피패스 테스트를 실제 계약대로 재작성: GET이 배열 반환,
+  POST가 `{keyword, region}` 본문을 파싱해 생성된 row(id 포함) 반환, DELETE가 URL의 `?id=`
+  쿼리를 파싱해 처리.
+
+### [검증]
+```
+npm run lint   → 통과 (에러/경고 없음)
+npm run test   → Test Files 2 passed (2), Tests 13 passed (13)
+npm run build  → Compiled successfully, TypeScript 통과, 라우트 정상 생성
+```
+13개 테스트 전부 통과 — 워치리스트 추가/제거 해피패스 테스트가 새 계약(배열 GET, id 기반
+DELETE)으로도 동일하게 통과함을 확인했고, 나머지 12개(로그인/로그아웃 헤더, 지역 전환,
+히스토리 등)는 이번 변경과 무관해 회귀 없음.
+
+### [종료]
+워치리스트 계약 불일치 수정 완료, lint/test/build 전부 그린. `frontend-loop`에 커밋.
+
+---
+
+## 통합 (merge, 라운드 3 후속) — `backend-loop` ← `frontend-loop` (`c784168` 반영)
+
+> 직전 병합(`dce6c77`)이 `ec11491` 기준으로 이뤄져, 그 뒤에 landing된 `c784168`
+> ("Fix /api/watchlist contract to match real backend implementation")이 누락되어 있었음.
+> `git merge frontend-loop` 재실행으로 반영.
+
+### [충돌 및 해소]
+- `LOOP_LOG.md`만 content 충돌(양쪽이 계속 독립적으로 이어씀). `git show ec11491:LOOP_LOG.md`와
+  `c784168:LOOP_LOG.md`를 비교해 `c784168`이 정확히 어떤 라인(603~650, 48줄, "반복 4 — 프론트엔드
+  (워치리스트 실계약 반영)" 섹션)을 추가했는지 확인한 뒤, 직전 병합 결과(`git show :2:LOOP_LOG.md`,
+  이미 backend/frontend 라운드 3 내용을 모두 포함)에 그 48줄만 그대로 이어붙임 — 재작업/중복 없음.
+- `src/app/page.tsx`, `src/app/page.test.tsx`, `src/components/WatchlistPanel.tsx`,
+  `src/lib/watchlist.ts` — 오케스트레이터 예상대로 전부 자동 병합(직전 병합에서 백엔드가 건드리지
+  않은 파일들이라 충돌 없음).
+
+### [검증 — 통합 결과 실측]
+```
+npm run lint   → 빈 출력, exit 0
+npm run test   → Test Files 4 passed (4), Tests 25 passed (25)  ← 동일(워치리스트 계약 수정은
+                 기존 8개 테스트를 실제 계약에 맞게 재작성한 것이지 개수 변화 아님)
+npm run build  → Compiled successfully, TypeScript 통과 (타입 에러 재발 없음)
+```
+
+**`npm run dev -- -p 3001` + curl (실 크리덴셜, 8개 요청)**
+```
+GET  /                                              → HTTP 200
+GET  /api/trends?region=KR                          → HTTP 200
+GET  /api/trends/history?region=KR                  → HTTP 200
+POST /api/cron/refresh-trends (no secret)            → HTTP 401
+POST /api/cron/refresh-trends (correct Bearer)       → HTTP 200
+GET    /api/watchlist (세션 없음)                     → HTTP 401
+POST   /api/watchlist (세션 없음)                     → HTTP 401
+DELETE /api/watchlist?id=<uuid> (세션 없음, 쿼리 파라미터로 실측) → HTTP 401
+```
+dev 로그 전수 확인 — 기존에 문서화한 `mocked` 컬럼 부재 에러 외 예상 밖 에러/회귀 없음.
+`lsof -ti:3001 | xargs kill` 후 포트 확인 → 정상 종료.
+
+### [결론]
+`c784168` 반영 후에도 lint/test(25개, 불변)/build/dev 8요청 curl 전부 그린 — 회귀 없음.
+`backend-loop`에 머지 커밋 진행.
