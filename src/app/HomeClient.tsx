@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { TrendsResponse } from "@/lib/trends/types";
 import { fetchTrendsHistory, toHistoryMap, computeDelta, TrendHistoryPoint } from "@/lib/trends/history";
@@ -255,6 +256,12 @@ export function HomeClient() {
               <RegionTabs regions={REGIONS} active={region} onChange={setRegion} />
             </div>
             <div className="flex items-center gap-3">
+              <Link
+                href="/pricing"
+                className="font-data text-xs text-flap-dim transition hover:text-flap"
+              >
+                요금제
+              </Link>
               <button
                 onClick={() => load(region)}
                 disabled={loading}

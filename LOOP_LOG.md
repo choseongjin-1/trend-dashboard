@@ -3597,3 +3597,112 @@ rate limiting 회귀 확인: `/api/trends?region=JP` 35회 병렬 발사 → 200
 배포 전이라 검증은 생략하지 않음. `backend-loop`가 이미 `984e38e`(fast-forward
 결과)이므로 별도 머지 커밋 없이 `main`으로 fast-forward·푸시 진행. 마이그레이션 관련
 블로커 없음(0001~0004 전부 라이브 적용/검증 완료).
+
+## 반복 15 — 프론트엔드 (SEO 크롤링 + 정적 요금제 페이지)
+
+### [배경] 및 [목표]
+사이트가 공개된 상태라 두 가지가 필요: (1) SEO 크롤링 — Next.js 파일 컨벤션으로
+`sitemap.ts`/`robots.ts`(정적 파일 없이), 홈 페이지 최소 포함(지역 변형은 선택), `/api/*`
+`/auth/*`는 크롤링 차단. (2) 정적 `/pricing` 페이지 — 지금 제품에는 무료/프리미엄 가치를
+설명하는 곳이 어디에도 없음(Stripe 연동 자체는 별도로 계정 이슈로 막혀있어, 이번 건 순수
+정보성 페이지). 무료 티어(오늘의 랭킹, 기본 검색) + 프리미엄 티어(실제로 만들어진 것 대비
+차별화될 만한 것 — 판단은 자유, CSV 내보내기처럼 아직 없지만 "예정"으로 명시하는 건 허용) +
+정직한 CTA(가짜 "구매하기" 버튼 금지, "곧 출시"/대기자 명단 식). FLIP 고유의 보이스/디자인
+시스템 유지 — 템플릿처럼 보이기 가장 쉬운 페이지 유형이라 다른 화면과 같은 수준의 디자인
+주의 요구됨.
+
+### [계획]
+1. `git merge main` — fast-forward, 코드 충돌 없음(로그만 추가된 상태)
+2. 기존 컨벤션 확인: `layout.tsx`의 `NEXT_PUBLIC_SITE_URL` 폴백 패턴 재사용,
+   `src/lib/trends/regions.ts`의 `REGIONS`(KR/US/JP) 재사용
+3. `sitemap.ts`: 홈("/") + 지역별 쿼리 변형(`/?region=KR|US|JP`, 지역마다 실제로 다른
+   랭킹 콘텐츠를 서빙하므로 별도 엔트리로 정당화) + `/pricing`. 갱신 주기는 실제 cron
+   갱신 빈도에 맞춰 홈/지역은 `hourly`, 요금제는 `monthly`
+4. `robots.ts`: `allow: "/"`, `disallow: ["/api/", "/auth/"]`, sitemap 링크 포함
+5. `/pricing`: 클라이언트 상태·`useSearchParams` 불필요 → 순수 서버 컴포넌트로, Suspense
+   불필요. 디자인: 제네릭 SaaS 가격표(체크 아이콘 원형 배지, "Most Popular" 리본 등) 대신
+   기존 화면의 시각 언어 재사용 — "확정된" 무료 티어는 랭킹 행과 같은 solid panel/border,
+   "아직 실재하지 않는" 프리미엄 티어는 기존 빈 상태(EmptyFlaps)와 같은 dashed border로
+   표현. `rising`/`falling`은 순위 델타 전용이라는 기존 색상 규칙(globals.css 주석) 유지 —
+   장식용으로 쓰지 않음
+6. 프리미엄 CTA: 실제 `<button disabled>` — 클릭하면 아무 일도 안 일어나는 가짜 링크나
+   조용히 실패하는 액션이 아니라, 애초에 상호작용 불가능한 상태임을 명시적으로 보여줌 +
+   보조 텍스트로 "출시되면 이 페이지에서 안내"
+7. 홈 헤더에 `/pricing` 링크 추가(발견 가능하도록 — 페이지가 고아 상태로 남지 않게)
+8. 신규 테스트(`pricing/page.test.tsx`), lint → test → build, dev 서버로 curl(sitemap.xml/
+   robots.txt/pricing 상태 코드·헤더) + Playwright 스크린샷(데스크톱/모바일) + axe 스캔 +
+   포커스 순서 확인, 스크래치 스크립트 정리 후 dev 서버 종료
+
+### [실행 + 관찰]
+
+**신규 파일**: `src/app/sitemap.ts`, `src/app/robots.ts`, `src/app/pricing/page.tsx`,
+`src/app/pricing/page.test.tsx`.
+**수정 파일**: `src/app/HomeClient.tsx`(헤더에 "요금제" 링크 1개 추가, `next/link` import).
+
+**빌드 결과** — `/pricing`·`/robots.txt`·`/sitemap.xml` 전부 정적(`○`)으로 생성됨(빌드
+타임에 완전히 결정 가능한 콘텐츠라 별도 런타임 비용 없음).
+
+**`npm run lint`** — 통과. **`npm run build`** — 클린.
+
+**`npm run test`**
+```
+ Test Files  12 passed (12)
+      Tests  102 passed (102)
+```
+102개 전부 통과(기존 96개 + 신규 6개: h1/h2 헤딩 존재, 무료 티어 기능 노출, 프리미엄
+티어 기능 노출, 무료 CTA가 실제 "/" 링크인지, 프리미엄 CTA가 진짜 `disabled` 버튼(가짜
+링크 아님)인지 + 보조 안내 문구, 헤더 워드마크가 "/"로 연결되는지).
+
+**실 브라우저 검증** (dev 서버 `-p 3009`):
+```
+GET /sitemap.xml → 200, content-type: application/xml
+  <url> 5개: "/", "/?region=KR|US|JP"(각 hourly, 0.8), "/pricing"(monthly, 0.5)
+GET /robots.txt  → 200, content-type: text/plain
+  User-Agent: *
+  Allow: /
+  Disallow: /api/
+  Disallow: /auth/
+  Sitemap: http://localhost:3000/sitemap.xml
+GET /pricing → 200
+```
+
+**구현 중 axe 스캔으로 발견한 실제 버그 1건** (검사가 아니라 스캔 결과로 발견): 프리미엄
+카드를 "덜 확정된" 느낌으로 흐리게 하려고 `text-flap-dim/70`, `/60` 같은 투명도를 낮춘
+변형을 새로 만들어 썼는데, `--casing`(#0e0e10) 배경 위에서 실제 대비가 2.67~3.22:1로
+WCAG AA 기준(4.5:1) 미달 — axe가 `color-contrast` 위반 2건으로 정확히 잡아냄. 기존
+화면 전역에서 이미 검증된 불투명 `text-flap-dim`(투명도 없음)으로 전부 교체해 해결 —
+"아직 없다"는 느낌은 border-dashed와 아이콘(✓ vs ·) 차이만으로 충분히 전달되므로 텍스트
+자체의 대비를 낮추는 방식은 애초에 불필요한 리스크였음.
+
+```
+axe violations (수정 전): 1건 (color-contrast, 노드 2개)
+axe violations (수정 후): 0건
+헤딩 순서: H1 "요금제" → H2 "무료" → H2 "프리미엄" (정상 계층)
+포커스 순서: FLIP 워드마크 → "무료로 시작하기"(프리미엄의 disabled 버튼은 건너뜀 — 확인:
+  disabled 버튼에 강제 focus() 시도해도 activeElement로 잡히지 않음, 즉 진짜 비활성)
+```
+데스크톱(900×700)·모바일(390×844) 스크린샷 확인 — 모바일에서 카드가 `sm:flex-row` →
+세로 스택으로 정상 전환, `scrollWidth > clientWidth` 확인 결과 가로 오버플로우 없음.
+
+**dev 서버 종료**: `lsof -ti:3009 | xargs kill` 후 포트 확인 → 정상 종료. 스크래치
+스크립트(`.scratch-pricing*.mjs`) 전부 삭제, 커밋 대상 아님.
+
+### [검증] — 성공 기준 대조
+1. sitemap.xml/robots.txt 정상 렌더(curl + 내용 확인) → **충족**
+2. 요금제 페이지가 디자인 시스템에 부합(스크린샷, 데스크톱+모바일) → **충족** — 기존 빈
+   상태/카드 스타일 재사용, 장식적 rising/falling 색상 사용 안 함
+3. 접근성(기존 a11y 패턴 재사용 — 헤딩 구조, 포커스 순서) → **충족**(axe 0 violations,
+   헤딩 계층 정상, disabled 버튼이 탭 순서에서 정확히 제외됨) — 스캔 중 실제 대비 버그
+   1건 발견/수정
+4. 신규 라우트 테스트 → **충족**(6개 신규, 102개 전체 통과)
+5. lint/build 클린 → **충족**
+
+### [개선/반복]
+1회 반복으로 모든 기준 충족, 추가 반복 불필요(규칙 9). 정직하게 기록할 점: 프리미엄
+기능 목록("CSV 내보내기", "히스토리 전체 보관" 등)은 실제로 구현되지 않은, 페이지 카피
+상으로만 존재하는 항목들 — 요청에 명시적으로 허용된 범위("stated-but-not-yet-built perk
+is fine")이며, CTA가 정직하게 disabled 상태이므로 실제로 결제/제공을 약속하지 않음.
+결제 연동(Stripe) 자체는 이번 라운드 범위 밖.
+
+### [종료]
+5개 성공 기준 모두 실측 증거로 충족. `frontend-loop`에 커밋 진행.
