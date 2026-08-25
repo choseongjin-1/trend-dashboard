@@ -3597,3 +3597,155 @@ rate limiting 회귀 확인: `/api/trends?region=JP` 35회 병렬 발사 → 200
 배포 전이라 검증은 생략하지 않음. `backend-loop`가 이미 `984e38e`(fast-forward
 결과)이므로 별도 머지 커밋 없이 `main`으로 fast-forward·푸시 진행. 마이그레이션 관련
 블로커 없음(0001~0004 전부 라이브 적용/검증 완료).
+
+---
+
+## 반복 — 백엔드 (프로덕션급 보안 헤더)
+
+> 사이트가 이제 실제로 라이브·공개 상태인데 보안 헤더가 전혀 없는 상태 — 이번 라운드에서
+> 해소. `git merge main` → 이미 최신(변경 없음). **참고**: 세션이 도중에 컨텍스트 한도로
+> 한 번 끊겼다 재개됨 — 끊긴 시점엔 Next 16 공식 CSP 문서(`node_modules/next/dist/docs/...`)를
+> 읽던 중이었고 코드는 전혀 작성되지 않은 상태였음, 재개 후 `git status`/`git log`로
+> 확인한 뒤 그 지점부터 이어서 진행.
+
+### [목표]
+1. `next.config.ts`의 `headers()` 또는 `src/proxy.ts` 중 적절한 레이어에 보안 헤더 구성 —
+   `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`(또는 동등한 CSP
+   `frame-ancestors`), `Referrer-Policy: strict-origin-when-cross-origin`, 앱이 실제로
+   필요로 하는 것에 맞춘 진짜 `Content-Security-Policy`(만능 와일드카드 금지), 프로덕션용
+   `Strict-Transport-Security`
+2. 아무것도 깨뜨리지 않기 — Supabase 인증, OG 이미지 라우트, 일반 페이지 렌더링 전부
+   새 CSP 아래서 정상 동작해야 함. 실제로 테스트("동작할 것"이 아니라)
+3. 실측 curl로 페이지/API 응답 둘 다에 헤더가 존재함을 확인, 새 CSP 아래서
+   auth callback/워치리스트/트렌드까지 앱이 종단으로 정상 동작함을 확인. 실제 dev 서버
+   구동 중 브라우저 콘솔에서 CSP 위반이 없는지 확인(정책이 이론적으로 맞다고 믿지 말 것)
+4. lint/build 클린, 근거 첨부
+
+### [계획]
+1. **레이어 결정**: Next 16 공식 CSP 가이드(`node_modules/next/dist/docs/01-app/02-guides/
+   content-security-policy.md`)를 먼저 읽음 — nonce 기반 CSP는 모든 페이지를 동적 렌더링으로
+   강제 전환해야 함(정적 최적화 상실, 현재 `/`와 `/opengraph-image.png`가 정적으로 생성되고
+   있음)을 확인. 이 앱은 nonce가 필요할 만큼 엄격한 인라인 스크립트 요구사항이 없어(Next
+   자체가 내보내는 것 외 커스텀 인라인 스크립트 없음), 문서가 권장하는 "Without Nonces"
+   경로(`next.config.ts`의 `headers()`에 정적 CSP)를 채택 — 정적 최적화 유지, `proxy.ts`는
+   건드리지 않음(세션 갱신이라는 기존 역할과 무관한 관심사를 섞지 않기 위해).
+2. **앱이 실제로 필요로 하는 외부 출처 조사**(추측 대신 코드로 확인):
+   - 브라우저가 직접 통신하는 서드파티는 Supabase 하나뿐(`src/lib/supabase/browser.ts`의
+     `createBrowserClient`가 REST/인증 엔드포인트에 직접 요청) — `grep`으로 클라이언트
+     코드에 `fetch("http...")` 같은 절대 URL 호출이 전혀 없음을 확인(YouTube/HN은 전부
+     서버 사이드 `src/lib/trends/*.ts`에서만 호출되므로 브라우저 CSP와 무관)
+   - realtime/websocket 사용 여부 확인 — `.channel(`/`postgres_changes` 등 grep 결과 0건,
+     `wss://` 허용 불필요
+   - 폰트는 `next/font/google`로 빌드 타임에 자체 호스팅됨(`/_next/static`에서 서빙) —
+     `fonts.googleapis.com` 등 외부 폰트 CDN 허용 불필요
+   - `<img>`/`next/image`/`thumbnailUrl` 렌더링 여부 확인 — 코드베이스 전체에 0건, OG
+     이미지는 정적 PNG 파일(`opengraph-image.png`)이라 런타임 이미지 생성도 없음 —
+     `img-src`는 `'self' data:`만으로 충분(`blob:` 불필요, 실제 사용처 없음)
+3. `connect-src`의 Supabase 출처는 하드코딩하지 않고 `NEXT_PUBLIC_SUPABASE_URL`에서
+   `new URL(...).origin`으로 동적 계산 — 프로젝트를 다른 Supabase 인스턴스로 바꿔도 코드
+   변경 불필요
+4. `X-Frame-Options: DENY`와 CSP `frame-ancestors 'none'` 둘 다 설정(과제가 "OR"로
+   허용했지만 비용이 거의 없어 구형 브라우저 호환까지 확보하는 쪽을 선택)
+5. HSTS는 `NODE_ENV === "production"`일 때만 추가 — 로컬 dev(http)에 HSTS를 보내는 건
+   의미가 없을뿐더러(브라우저가 http에서는 무시하지만 애초에 보낼 이유가 없음) 틀린
+   신호. 값은 `max-age=63072000; includeSubDomains; preload`(2년, HSTS preload list
+   등재 요건을 충족하는 표준값)
+6. `'unsafe-eval'`은 dev에서만(React의 서버 에러 스택 재구성에 필요, 문서에 명시된 사실),
+   `upgrade-insecure-requests`는 prod에서만
+7. `npm run lint/build` → dev 서버 기동 → curl로 페이지/API 헤더 실측 확인 → **Playwright로
+   실제 헤드리스 브라우저 구동**(이 워크트리에 이미 devDependency로 설치돼 있음, 이전
+   프론트 라운드의 접근성 감사 때 설치됨) — 페이지 로드, 지역 탭 전환, 인증 모달 열고 실제
+   로그인 시도(Supabase 브라우저 클라이언트가 실제로 `connect-src` 대상에 fetch하도록),
+   키워드 상세 클릭, `/auth/callback` 이동까지 실제 브라우저 세션으로 수행하며
+   `securitypolicyviolation` DOM 이벤트와 콘솔 에러를 전부 수집 → 0건이어야 통과
+8. 프로덕션 빌드(`npm run build && npm run start`)로 HSTS 헤더 존재 + `'unsafe-eval'` 부재
+   확인, 동일한 Playwright 워크스루를 프로덕션 빌드에도 한 번 더 실행(라이브 배포로 이어지는
+   변경이라 dev만으로 끝내지 않음)
+
+### [실행 + 관찰]
+
+**Next 16 CSP 문서 확인**: `content-security-policy.md`의 "Without Nonces" 섹션이 정확히
+이 앱에 맞는 패턴 — nonce 없이 `next.config.ts`의 `headers()`에서 정적 CSP 문자열을
+반환하는 방식. `unsafe-inline`을 쓰더라도 모든 다른 디렉티브가 `'self'`로 좁혀져 있으면
+"만능 와일드카드"와는 다르다는 것을 문서 자체가 이 경로의 정당한 트레이드오프로 제시함.
+
+**신규 설정 파일**: `next.config.ts` 전면 작성 — `buildCsp()`(dev/prod 분기 포함),
+`supabaseOrigin()`(env var에서 동적 추출), `securityHeaders` 배열(5개 헤더, HSTS는
+prod에서만 배열에 추가), `headers()` async 함수가 `source: '/(.*)'`로 전체 라우트에 적용.
+
+**`npm run lint`** → 빈 출력, exit 0
+
+**`npm run build`** → 클린. 라우트 목록에서 `/`, `/opengraph-image.png`가 여전히
+`○`(정적)로 유지됨을 확인 — nonce 없는 경로 선택이 실제로 정적 최적화를 보존함을
+빌드 출력으로 실측.
+
+**`npm run test`** → 96개 전부 통과(설정 파일만 바뀐 변경이라 예상대로 회귀 없음).
+
+**dev 서버(`:3001`) curl 헤더 실측**:
+```
+=== / ===
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+Referrer-Policy: strict-origin-when-cross-origin
+Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval';
+  style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self';
+  connect-src 'self' https://<실제 프로젝트 ref>.supabase.co; object-src 'none';
+  base-uri 'self'; form-action 'self'; frame-ancestors 'none'
+
+=== /api/trends ===
+(동일한 5개 헤더 전부 존재 — API 응답에도 적용됨을 확인)
+```
+`connect-src`가 실제 `.env.local`의 `NEXT_PUBLIC_SUPABASE_URL`에서 정확히 파생된 실제
+프로젝트 origin임을 확인(하드코딩 아님, 동적 계산 실증).
+
+**Playwright 실 브라우저 워크스루(dev, `:3001`)**: 헤드리스 크로미움으로 ①`/` 로드 →
+②지역 탭 US 클릭 → ③로그인 버튼 클릭 후 실제 이메일/비밀번호 입력 + 제출(Supabase
+브라우저 클라이언트가 실제로 `connect-src`의 Supabase origin에 fetch를 시도하도록 강제) →
+④랭킹 아이템 클릭(키워드 상세) → ⑤`/auth/callback` 직접 이동, 전 과정에서
+`securitypolicyviolation` DOM 이벤트 리스너 + `console` 에러 수집:
+```
+CSP violations (securitypolicyviolation events): []
+Console errors: []
+PASS: zero CSP violations across the full walkthrough
+```
+dev 서버 로그에도 이 워크스루로 인한 예상 밖 에러 없음(실패한 로그인 시도로 인한
+`GET /?auth_error=1 200` 리다이렉트 로그만 있음 — 의도된 정상 동작, 존재하지 않는
+이메일/틀린 비밀번호로 로그인 시도했으니 실패하는 게 맞음).
+
+**기능 회귀 확인(새 헤더 아래서)**: `/api/trends`(다중 소스 블렌드 정상),
+`/api/trends/history`(200), `/api/trends/keyword-history`(200), `/auth/callback`(307),
+`/api/watchlist` GET(401), `/opengraph-image.png`(200, `file`로 PNG 확인), cron
+정상비밀(200) — 전부 정상. rate limiting도 35회 병렬 발사로 재확인(200/429 혼재, 정상).
+
+**프로덕션 빌드(`npm run build && npm run start -p 3002`) 재검증**:
+```
+Strict-Transport-Security: max-age=63072000; includeSubDomains; preload   ← prod에서만 등장, 실측 확인
+Content-Security-Policy: ...script-src 'self' 'unsafe-inline';...upgrade-insecure-requests
+  ← 'unsafe-eval' 없음(dev 전용이었던 게 실제로 빠짐), upgrade-insecure-requests 추가됨
+```
+동일한 Playwright 워크스루를 프로덕션 빌드에도 재실행 → 동일하게
+`CSP violations: []`, `Console errors: []`. 프로덕션 로그 스캔에서도 예상 밖 에러 0건.
+두 서버 모두 정상 종료 확인(포트 재확인).
+
+### [검증] — 성공 기준 대조
+1. `next.config.ts`의 `headers()`에 5개 헤더(CSP 포함, 실제 필요 출처로 좁힘) 구성 →
+   **충족**
+2. Supabase 인증/OG 이미지/일반 렌더링 전부 새 CSP에서 정상 동작 → **충족**(Playwright
+   실 브라우저로 로그인 시도까지 실제로 수행해 확인, 추측 아님)
+3. curl로 페이지+API 헤더 존재 실측, 새 CSP 아래 종단 기능 확인, 브라우저 콘솔 CSP 위반
+   0건 실측 → **충족**(dev + prod 두 빌드 모두)
+4. lint/build 클린 → **충족**
+
+### [개선/반복]
+1회 반복으로 4개 기준 모두 실측 충족. 추가 반복 불필요(규칙 9). 정직하게 기록할 점:
+`script-src`/`style-src`에 `'unsafe-inline'`을 그대로 둠(nonce 미사용) — 완벽히 엄격한
+CSP는 아니지만, 다른 모든 디렉티브를 `'self'`로 좁히고 `connect-src`도 실제로 필요한
+Supabase origin 하나로만 제한해 "와일드카드로 방어를 무력화"하지는 않았다는 것이 이번
+요청의 실제 기준. 향후 XSS 방어를 한 단계 더 강화하려면 nonce 기반 CSP + 관련 페이지의
+동적 렌더링 전환을 별도 라운드로 고려 가능(정적 최적화 트레이드오프가 있어 이번 라운드
+범위 밖으로 의도적으로 둠).
+
+### [종료]
+4개 성공 기준 모두 실측 증거로 충족 — curl 헤더 확인뿐 아니라 실제 헤드리스 브라우저로
+로그인 시도까지 수행해 CSP 위반 0건을 dev/prod 양쪽에서 확인. 마이그레이션/DB 변경
+없음(순수 설정 변경), 블로커 없음.
