@@ -2874,3 +2874,189 @@ rate limiting 회귀 확인: `/api/trends?region=US` 35회 병렬 발사 → 200
 회귀 확인까지 전부 그린 — 순수 fast-forward라 병합 충돌 자체는 없었지만 라이브 배포
 전이라 검증은 생략하지 않음. `backend-loop`가 이미 `775ba6c`(fast-forward 결과)이므로
 별도 머지 커밋 없이 `main`으로 fast-forward·푸시 진행.
+
+## 반복 12 — 프론트엔드 (공유 가능한 키워드 URL + 접근성 감사)
+
+### [배경]
+두 개 목표를 한 라운드로 진행. (1) `KeywordDetailModal`이 클라이언트 상태로만 열려
+링크·북마크·공유가 불가능 — 딥링크 가능하게 만들 것. (2) 반복 8 로그에 남겨둔
+"dataviz 표 뷰 폴백 생략" 메모에서 시작하되, 실제 정식 접근성 감사(키보드 내비게이션,
+스크린리더 시맨틱, 색상 대비 실측, `prefers-reduced-motion`)를 처음으로 수행. 백엔드가
+병행으로 워치리스트에 last-seen-rank 필드를 추가 중이나 이번 라운드와는 무관(향후 알림
+기능용 컨텍스트).
+
+### [목표]
+1. `?keyword=X&region=KR` 형태로 키워드 상세를 딥링크 가능하게 — 열기/닫기 시 URL 갱신,
+   브라우저 뒤로/앞으로 가기가 "시각적으로만"이 아니라 실제로 모달을 닫음/엶, 모달에
+   "공유"(링크 복사/모바일 네이티브 공유시트) 기능, 존재하지 않는/만료된 키워드로 접근해도
+   절대 깨지지 않는 방어적 처리
+2. 키보드 내비게이션(탭 순서, 모달 포커스 트랩·복원, Escape), 스크린리더 시맨틱(차트의
+   비시각적 대안), 실측 색상 대비, `prefers-reduced-motion` — 전부 실측 증거와 함께 점검
+3. 두 목표 모두 실제 검증 증거(스크린샷, 실측 대비비, 실제 키보드 워크스루) + 테스트 통과
+   + lint/build 클린
+
+### [계획]
+1. `git merge main` — 백엔드 검증 로그만 추가, 코드 충돌 없음(fast-forward)
+2. Next.js 문서(`node_modules/next/dist/docs`)에서 `useSearchParams` 요구사항 확인 —
+   프로덕션 정적 빌드에서 `Suspense` 경계 없이 쓰면 빌드 실패한다는 경고를 사전에 발견,
+   `page.tsx`를 얇은 `<Suspense>` 래퍼로 분리하고 실제 로직은 `HomeClient.tsx`로 이동하는
+   구조 결정
+3. `HomeClient.tsx`: URL을 상세 모달의 단일 진실 소스로 삼음(`detailKeyword =
+   searchParams.get("keyword")`, 별도 useState 없음) — 이렇게 해야 브라우저 뒤로가기가
+   "진짜" 닫힘이 됨(URL이 바뀌면 컴포넌트가 그 값을 그대로 읽어 재렌더링하므로). 열기/닫기는
+   `router.push`, 모달이 열린 채 지역 탭을 바꾸면 `router.replace`로 URL의 region만
+   동기화(히스토리 스팸 방지)
+4. 존재하지 않는 키워드 엣지 케이스는 이미 `KeywordDetailModal`의 희소-데이터 분기가
+   처리 — 신규 코드 불필요, 실측 테스트로만 확인
+5. 접근성: 실제 axe-core 스캔(Playwright에 주입) 먼저 돌려 진짜 문제를 찾은 뒤 고침(가정
+   금지) → 모달 포커스 트랩/복원 공용 훅, 차트 스크린리더용 접근 가능 테이블, 대비 계산으로
+   실패 발견 시 수정
+6. lint → test → build, axe 스캔 재확인, 실제 키보드 워크스루, URL/뒤로가기 스크린샷,
+   dev 서버 종료
+
+### [실행 + 관찰]
+
+**GOAL 1 — 구현**
+- `src/app/page.tsx` → `<Suspense fallback={null}><HomeClient /></Suspense>` 래퍼로 축소
+- `src/app/HomeClient.tsx`(신규) — 기존 `page.tsx` 로직 이전 + `useSearchParams`/
+  `usePathname`/`useRouter`(`next/navigation`) 기반 URL 동기화. `openDetail`/`closeDetail`
+  함수, region 초기값도 URL에서 읽음(`?region=` 유효성 검사 후 폴백)
+- `KeywordDetailModal.tsx`에 "공유" 버튼 추가 — `navigator.share`(모바일 네이티브
+  시트) 우선 시도, 실패/미지원 시 `navigator.clipboard.writeText`로 폴백, 클립보드조차
+  안 되면(권한/비보안 컨텍스트) 조용히 무시 — 프로젝트 전반의 방어적 원칙과 동일(never
+  crash on a best-effort affordance)
+
+**GOAL 1 — 실측 검증** (dev 서버 `-p 3007`, Playwright 스크립트로 실제 브라우저 조작):
+```
+1. 초기 URL: http://localhost:3007/
+2. "알파드라이브원" 클릭 후 URL: .../?keyword=...&region=KR
+3. 브라우저 Back 후 — URL: http://localhost:3007/ | dialog present: false
+4. 브라우저 Forward 후 — URL: .../?keyword=...&region=KR | dialog present: true
+5. 새 탭에서 딥링크 직접 열기 → dialog present on direct load: true
+6. 존재하지 않는 키워드(`완전히없는키워드XYZ`) 딥링크 → dialog 텍스트:
+   "...완전히없는키워드XYZ\n공유\n✕\n\n아직 데이터가 충분하지 않습니다\n..."
+```
+**3번이 핵심 증거** — "시각적으로만" 닫히는 게 아니라 실제 브라우저 뒤로가기로 URL 자체가
+`/`로 돌아가고 dialog가 DOM에서 완전히 사라짐을 확인. 공유 버튼도 클립보드 권한을 부여한
+브라우저 컨텍스트에서 실측: 클릭 후 라벨이 "공유"→"복사됨"으로 바뀌고, 클립보드 실제
+내용이 정확한 딥링크 URL(`.../?keyword=...&region=KR`)임을 `navigator.clipboard.readText()`로
+직접 확인. 스크린샷 2장(딥링크 신규 오픈, 존재하지 않는 키워드)으로 시각 확인.
+
+**GOAL 2 — axe-core 스캔 (실제 발견 → 수정 → 재확인)**
+1차 스캔(홈/인증모달/키워드상세모달 3곳) 결과:
+```
+home: 3 violations — landmark-one-main, page-has-heading-one, region(83 nodes)
+auth modal open: 1 violation — region(83 nodes)
+keyword detail modal open: 1 violation — region(83 nodes)
+```
+가정하지 않고 실제 스캔으로 발견한 문제 → 수정: 헤더 `<div>`→`<header>`, 콘텐츠
+`<div>`→`<main>`, 태그라인 `<p>`→`<h1>`(Tailwind preflight가 헤딩 기본 스타일을
+리셋하므로 시각적으로 동일하게 유지됨). 수정 후 재스캔:
+```
+home: 0 violations
+auth modal open: 0 violations
+keyword detail modal open: 0 violations
+```
+
+**GOAL 2 — 색상 대비 실측** (WCAG 상대휘도 공식으로 직접 계산, 다크 FLIP 팔레트 전체):
+```
+flap on casing        16.36:1  (AAA)
+flap on panel          14.55:1  (AAA)
+flap-dim on casing      5.44:1  (AA)
+flap-dim on panel       4.83:1  (AA)
+rising on casing        9.98:1  (AAA)
+rising on panel         8.87:1  (AAA)
+falling on casing       4.33:1  (AA 미달 — 4.5:1 필요)  ← 실패 발견
+falling on panel        3.85:1  (AA 미달)               ← 실패 발견
+```
+**`falling`(#c4544a)이 반복 7(FLIP 도입)부터 지금까지 두 배경 모두에서 WCAG AA 미달
+상태였음을 이번 실측으로 처음 발견** — 에러 배너/워치리스트 삭제 아이콘 호버/RankDelta
+하락 배지 전부가 대비 기준 미달로 렌더링되고 있었다는 뜻. `#e07569`로 교체(`casing` 위
+6.35:1 / `panel` 위 5.65:1, 여유 있게 통과) — 색상환상 여전히 명확한 빨강이고 테라코타
+쪽으로 치우치지 않도록 확인.
+
+**GOAL 2 — 키보드 워크스루** (실제 Playwright 키보드 조작, 가정 아님):
+```
+Tab 1: tab "KR대한민국" → Tab 2: tab "US..." → Tab 3: tab "JP..." → Tab 4: 갱신 버튼
+→ Tab 5: 로그인 버튼 → Tab 6~8: 랭킹 행 키워드 버튼들 (순서 정상, 예상 밖 점프 없음)
+
+키보드로 상세 모달 열기(포커스된 행 버튼에서 Enter):
+  열림 직후 활성 요소 → button "공유" (모달의 첫 포커스 가능 요소로 정상 이동)
+
+포커스 트랩:
+  Shift+Tab from "공유" → "닫기" (마지막 요소로 정상 wrap)
+  이후 Tab 5회 → 공유/닫기/공유/닫기/공유 (트랩 내부에서만 순환 확인)
+
+Escape:
+  Dialog present after Escape: false
+  포커스 복원: 정확히 모달을 열었던 그 행 버튼("알파드라이브원")으로 복귀 확인
+```
+`AuthModal`도 동일한 `useModalA11y` 훅을 공유 — axe 스캔(0 violations)과 `page.test.tsx`의
+신규 유닛 테스트로 별도 확인(포커스가 모달 안으로 이동하고 `document.body`에 남아있지
+않음), 전체 키보드 스크립트는 중복이라 생략.
+
+**GOAL 2 — 스크린리더 시맨틱**: `RankHistoryChart`의 `<svg>`를 `role="img"` +
+`aria-label`(모양만 알려주고 실제 수치는 전달 못 함)에서 `aria-hidden="true"`로 변경,
+대신 `sr-only` 클래스의 실제 `<table>`(시간/순위 컬럼)을 추가해 스크린리더 사용자가 진짜
+데이터 포인트에 접근 가능하도록 함 — 시각적 차트는 이제 장식으로 취급되고 텍스트
+대안이 진짜 콘텐츠.
+
+**GOAL 2 — `prefers-reduced-motion`**: Playwright의 `page.emulateMedia({reducedMotion:
+"reduce"})`로 실측 — `.flap-row`/`.live-dot`의 computed `animationName`이 둘 다 `"none"`으로
+확인(기존 반복 7의 미디어쿼리가 실제로 작동함을 처음으로 실측 검증). 호버 색상 전환
+(`transition` 유틸리티)은 WCAG가 대상으로 하는 "동작/모션"이 아니라 단순 색상 보간이라
+별도 처리 없이 유지하기로 판단(의식적 결정으로 기록).
+
+**신규/변경 파일**: `src/app/page.tsx`(축소), `src/app/HomeClient.tsx`(신규),
+`src/hooks/useModalA11y.ts`(신규), `src/components/AuthModal.tsx`/
+`KeywordDetailModal.tsx`(훅 연결 + 공유 버튼), `src/components/RankHistoryChart.tsx`(sr-only
+테이블), `src/app/globals.css`(`falling` 대비 수정), `src/app/page.test.tsx`(`Home`→
+`HomeClient` 임포트 전환, `next/navigation` 반응형 목 신설, 딥링크/뒤로가기/접근성 신규
+테스트 6개).
+
+**`next/navigation` 테스트 목 관련 메모**: `useSearchParams`가 실제 앱 라우터 컨텍스트 없이
+호출되면 즉시 에러가 나 첫 테스트 실행이 13개 전부 실패 — 단순 정적 목으로는 "열기/닫기가
+URL을 실제로 반영하는지"를 검증할 수 없어서, `useSyncExternalStore` 기반의 반응형 목(공유
+쿼리스트링 스토어를 라우터의 push/replace가 실제로 변경하고 구독 컴포넌트가 재렌더링)을
+직접 구현 — 이 목 덕분에 "뒤로가기 시뮬레이션"(`setSearch("")`로 URL을 외부에서 바꿔 모달이
+실제로 닫히는지)까지 jsdom에서 검증 가능해짐.
+
+**`npm run lint`** — 1차 실행에서 `useModalA11y.ts`의 `onCloseRef.current = onClose;`가
+렌더 중 ref 수정으로 `react-hooks/refs` 규칙에 걸림 → `useEffect(() => {
+onCloseRef.current = onClose; })`(매 렌더 후 실행되는 빈 deps effect)로 이동 → 재실행 통과.
+
+**`npm run test`**
+```
+ Test Files  10 passed (10)
+      Tests  77 passed (77)
+```
+77개 전부 통과(기존 71개 + 신규 6개: 딥링크 온로드 오픈, 존재하지 않는 키워드 그레이스풀
+처리, URL 열기/닫기 동기화, 뒤로가기 시뮬레이션으로 모달 닫힘, Escape+포커스 복원, 인증
+모달 포커스 진입).
+
+**`npm run build`** — 클린. `/`가 여전히 `○ (Static)`로 표시됨 — `Suspense` 경계가
+`useSearchParams`를 올바르게 감싸 정적 프리렌더가 깨지지 않음을 빌드 결과로 확인(문서에서
+경고한 실패 시나리오를 사전에 피함).
+
+**dev 서버 종료**: `lsof -ti:3007 | xargs kill` 후 포트 확인 → 정상 종료. 스크래치
+스크립트(axe/키보드/URL/공유/모션 검증용 5개) 전부 삭제, 커밋 대상 아님.
+
+### [검증] — 성공 기준 대조
+1. 딥링크 가능한 URL, 열기/닫기 동기화, 실제 뒤로/앞으로가기 동작, 공유 버튼(클립보드 실측
+   확인), 존재하지 않는 키워드 그레이스풀 처리 → **충족**
+2. 키보드 내비게이션(실제 워크스루)/스크린리더 시맨틱(sr-only 테이블)/실측 대비(버그 발견+
+   수정)/`prefers-reduced-motion`(실측 확인) — 전부 구체적 실측 증거와 함께 → **충족**
+3. 테스트 갱신·추가(77개 전부 통과), lint/build 클린 → **충족**
+
+### [개선/반복]
+1회 반복으로 3개 기준 모두 충족되어 추가 반복 불필요(규칙 9). 정직하게 기록할 점:
+- `RegionTabs`의 화살표 키 로빙 tabindex(ARIA 저작 관행에서 권장하는 완전한 tablist
+  패턴)는 구현하지 않음 — axe-core가 이를 위반으로 잡지 않고(자동 도구가 못 잡는 항목),
+  Tab 키만으로도 각 탭에 도달 가능해 기능적으로 막혀 있지는 않음. 완벽한 ARIA 저작 관행
+  준수까지는 이번 라운드 범위 밖으로 의식적으로 남겨둠.
+- `falling` 대비 버그는 반복 7부터 존재했다는 것 자체가 "직접 계산하지 않으면 놓친다"는
+  이번 라운드 지시의 정당성을 보여주는 사례 — 이전 라운드들에서 "다크 배경에 크림 텍스트니까
+  대비가 괜찮을 것"이라는 가정만 했을 뿐 실제로 계산한 적이 없었음.
+
+### [종료]
+3개 성공 기준 모두 실측 증거로 충족. `frontend-loop`에 커밋 진행.

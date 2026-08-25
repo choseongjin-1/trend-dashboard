@@ -1,13 +1,49 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { useSyncExternalStore } from "react";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import Home from "./page";
+import { HomeClient } from "./HomeClient";
 import type { TrendsResponse } from "@/lib/trends/types";
 import type { WatchlistRow } from "@/lib/watchlist";
 import { useAuth } from "@/lib/auth/useAuth";
 
 vi.mock("@/lib/auth/useAuth", () => ({
   useAuth: vi.fn(),
+}));
+
+// A minimal reactive stand-in for next/navigation: the mocked router's
+// push/replace mutate a shared query-string store and notify subscribers,
+// so components reading useSearchParams() actually re-render with the new
+// URL — the same way the real App Router context behaves. Needed because
+// HomeClient derives the detail modal's open state directly from the URL
+// (round 12: deep-linkable keyword detail).
+const navState = vi.hoisted(() => ({
+  search: "",
+  listeners: new Set<() => void>(),
+}));
+
+function setSearch(qs: string) {
+  navState.search = qs;
+  navState.listeners.forEach((l) => l());
+}
+
+vi.mock("next/navigation", () => ({
+  useSearchParams: () => {
+    const qs = useSyncExternalStore(
+      (cb) => {
+        navState.listeners.add(cb);
+        return () => navState.listeners.delete(cb);
+      },
+      () => navState.search,
+      () => navState.search,
+    );
+    return new URLSearchParams(qs);
+  },
+  usePathname: () => "/",
+  useRouter: () => ({
+    push: (url: string) => setSearch(url.includes("?") ? url.split("?")[1] : ""),
+    replace: (url: string) => setSearch(url.includes("?") ? url.split("?")[1] : ""),
+  }),
 }));
 
 const mockUseAuth = vi.mocked(useAuth);
@@ -60,6 +96,7 @@ describe("Home dashboard", () => {
   beforeEach(() => {
     mockUseAuth.mockReturnValue(loggedOut);
     vi.stubGlobal("fetch", vi.fn(baseFetchImplementation));
+    setSearch("");
   });
 
   afterEach(() => {
@@ -68,7 +105,7 @@ describe("Home dashboard", () => {
   });
 
   it("renders the ranking list given a mocked successful fetch response", async () => {
-    render(<Home />);
+    render(<HomeClient />);
 
     expect(await screen.findByText("가을 캠핑 브이로그")).toBeInTheDocument();
     expect(await screen.findByText("저속노화 식단 챌린지")).toBeInTheDocument();
@@ -94,7 +131,7 @@ describe("Home dashboard", () => {
       }),
     );
 
-    render(<Home />);
+    render(<HomeClient />);
 
     const alert = await screen.findByRole("alert");
     expect(alert).toHaveTextContent("오류: 요청 실패 (500)");
@@ -117,7 +154,7 @@ describe("Home dashboard", () => {
       }),
     );
 
-    render(<Home />);
+    render(<HomeClient />);
 
     expect(await screen.findByText("표시할 키워드가 없습니다")).toBeInTheDocument();
   });
@@ -135,7 +172,7 @@ describe("Home dashboard", () => {
       }),
     );
 
-    render(<Home />);
+    render(<HomeClient />);
 
     await waitFor(() => {
       expect(screen.getByText("가을 캠핑 브이로그")).toBeInTheDocument();
@@ -145,7 +182,7 @@ describe("Home dashboard", () => {
   });
 
   it("shows a sign-in prompt in the header when logged out", async () => {
-    render(<Home />);
+    render(<HomeClient />);
     await screen.findByText("가을 캠핑 브이로그");
 
     expect(screen.getByRole("button", { name: "로그인" })).toBeInTheDocument();
@@ -155,7 +192,7 @@ describe("Home dashboard", () => {
   it("shows the user's email and a logout control when logged in", async () => {
     mockUseAuth.mockReturnValue({ ...loggedOut, user: { email: "creator@example.com" } });
 
-    render(<Home />);
+    render(<HomeClient />);
     await screen.findByText("가을 캠핑 브이로그");
 
     expect(screen.getByText("creator@example.com")).toBeInTheDocument();
@@ -168,7 +205,7 @@ describe("Home dashboard", () => {
     vi.stubGlobal("fetch", fetchMock);
     const user = userEvent.setup();
 
-    render(<Home />);
+    render(<HomeClient />);
     await screen.findByText("가을 캠핑 브이로그");
     expect(fetchMock).toHaveBeenCalledWith("/api/trends?region=KR");
 
@@ -219,7 +256,7 @@ describe("Home dashboard", () => {
     );
     const user = userEvent.setup();
 
-    render(<Home />);
+    render(<HomeClient />);
     await screen.findByText("가을 캠핑 브이로그");
 
     const addButtons = await screen.findAllByRole("button", { name: "워치리스트에 추가" });
@@ -239,29 +276,28 @@ describe("Home dashboard", () => {
     });
   });
 
+  const keywordHistoryFetch = (input: RequestInfo | URL) => {
+    const url = typeof input === "string" ? input : input.toString();
+    if (url.includes("/api/trends/keyword-history")) {
+      return Promise.resolve(
+        jsonResponse({
+          keyword: "가을 캠핑 브이로그",
+          region: "KR",
+          points: [
+            { rank: 3, fetchedAt: "2026-08-24T00:00:00.000Z" },
+            { rank: 1, fetchedAt: "2026-08-24T01:00:00.000Z" },
+          ],
+        }),
+      );
+    }
+    return baseFetchImplementation(input);
+  };
+
   it("opens a keyword detail view with a rank-history chart when enough history exists", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((input: RequestInfo | URL) => {
-        const url = typeof input === "string" ? input : input.toString();
-        if (url.includes("/api/trends/keyword-history")) {
-          return Promise.resolve(
-            jsonResponse({
-              keyword: "가을 캠핑 브이로그",
-              region: "KR",
-              points: [
-                { rank: 3, fetchedAt: "2026-08-24T00:00:00.000Z" },
-                { rank: 1, fetchedAt: "2026-08-24T01:00:00.000Z" },
-              ],
-            }),
-          );
-        }
-        return baseFetchImplementation(input);
-      }),
-    );
+    vi.stubGlobal("fetch", vi.fn(keywordHistoryFetch));
     const user = userEvent.setup();
 
-    render(<Home />);
+    render(<HomeClient />);
     await screen.findByText("가을 캠핑 브이로그");
 
     await user.click(screen.getByRole("button", { name: "가을 캠핑 브이로그" }));
@@ -269,7 +305,10 @@ describe("Home dashboard", () => {
     const dialog = await screen.findByRole("dialog", { name: "가을 캠핑 브이로그 순위 추이" });
     expect(within(dialog).getByText(/현재/)).toBeInTheDocument();
     expect(within(dialog).getByText(/최고/)).toBeInTheDocument();
-    expect(within(dialog).getByRole("img", { name: "키워드 순위 추이 차트" })).toBeInTheDocument();
+    // The chart's SVG is now aria-hidden (decorative) — the real data lives
+    // in an accessible table for screen readers instead.
+    expect(within(dialog).getByRole("table")).toBeInTheDocument();
+    expect(within(dialog).getByText("3위")).toBeInTheDocument();
     expect(within(dialog).queryByText("아직 데이터가 충분하지 않습니다")).not.toBeInTheDocument();
   });
 
@@ -278,25 +317,25 @@ describe("Home dashboard", () => {
 
     // baseFetchImplementation returns a 404 for /api/trends/history, so every
     // keyword resolves to an empty history — the sparse-data case.
-    render(<Home />);
+    render(<HomeClient />);
     await screen.findByText("가을 캠핑 브이로그");
 
     await user.click(screen.getByRole("button", { name: "가을 캠핑 브이로그" }));
 
     const dialog = await screen.findByRole("dialog", { name: "가을 캠핑 브이로그 순위 추이" });
     expect(within(dialog).getByText("아직 데이터가 충분하지 않습니다")).toBeInTheDocument();
-    expect(within(dialog).queryByRole("img", { name: "키워드 순위 추이 차트" })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("table")).not.toBeInTheDocument();
   });
 
   it("does not name YouTube specifically in user-facing copy", async () => {
-    render(<Home />);
+    render(<HomeClient />);
     await screen.findByText("가을 캠핑 브이로그");
 
     expect(screen.queryByText(/YouTube/i)).not.toBeInTheDocument();
   });
 
   it("hides per-item source labels when every item shares one source", async () => {
-    render(<Home />);
+    render(<HomeClient />);
     await screen.findByText("가을 캠핑 브이로그");
 
     expect(screen.queryByText("YouTube")).not.toBeInTheDocument();
@@ -324,10 +363,117 @@ describe("Home dashboard", () => {
       }),
     );
 
-    render(<Home />);
+    render(<HomeClient />);
     await screen.findByText("가을 캠핑 브이로그");
 
     expect(screen.getByText("YouTube")).toBeInTheDocument();
     expect(screen.getByText("Hackernews")).toBeInTheDocument();
+  });
+
+  describe("deep-linkable keyword detail (URL sync)", () => {
+    it("opens the detail modal directly on load when ?keyword= is present in the URL", async () => {
+      setSearch("keyword=" + encodeURIComponent("가을 캠핑 브이로그") + "&region=KR");
+      vi.stubGlobal("fetch", vi.fn(keywordHistoryFetch));
+
+      render(<HomeClient />);
+
+      const dialog = await screen.findByRole("dialog", { name: "가을 캠핑 브이로그 순위 추이" });
+      expect(dialog).toBeInTheDocument();
+    });
+
+    it("gracefully shows the sparse-data state for a keyword that doesn't exist / has no history", async () => {
+      setSearch("keyword=" + encodeURIComponent("존재하지않는키워드") + "&region=KR");
+      vi.stubGlobal(
+        "fetch",
+        vi.fn((input: RequestInfo | URL) => {
+          const url = typeof input === "string" ? input : input.toString();
+          if (url.includes("/api/trends/keyword-history")) {
+            return Promise.resolve(
+              jsonResponse({ keyword: "존재하지않는키워드", region: "KR", points: [] }),
+            );
+          }
+          return baseFetchImplementation(input);
+        }),
+      );
+
+      render(<HomeClient />);
+
+      const dialog = await screen.findByRole("dialog", { name: "존재하지않는키워드 순위 추이" });
+      expect(within(dialog).getByText("아직 데이터가 충분하지 않습니다")).toBeInTheDocument();
+      // Never a broken/blank state.
+      expect(within(dialog).queryByText(/undefined|NaN/)).not.toBeInTheDocument();
+    });
+
+    it("updates the URL when opening a keyword and removes it when closing", async () => {
+      vi.stubGlobal("fetch", vi.fn(keywordHistoryFetch));
+      const user = userEvent.setup();
+
+      render(<HomeClient />);
+      await screen.findByText("가을 캠핑 브이로그");
+      expect(navState.search).toBe("");
+
+      await user.click(screen.getByRole("button", { name: "가을 캠핑 브이로그" }));
+      await screen.findByRole("dialog", { name: "가을 캠핑 브이로그 순위 추이" });
+      expect(navState.search).toContain("keyword=");
+      expect(navState.search).toContain("region=KR");
+
+      await user.click(screen.getByRole("button", { name: "닫기" }));
+      await waitFor(() => {
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      });
+      expect(navState.search).not.toContain("keyword=");
+    });
+
+    it("closes the modal when the URL's keyword param is removed (browser back button)", async () => {
+      setSearch("keyword=" + encodeURIComponent("가을 캠핑 브이로그") + "&region=KR");
+      vi.stubGlobal("fetch", vi.fn(keywordHistoryFetch));
+
+      render(<HomeClient />);
+      await screen.findByRole("dialog", { name: "가을 캠핑 브이로그 순위 추이" });
+
+      // Simulate the browser back button: the URL changes out from under the
+      // component, exactly like a popstate-driven searchParams update.
+      setSearch("");
+
+      await waitFor(() => {
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      });
+      // The list underneath is still intact — closing via URL isn't a crash.
+      expect(screen.getByText("가을 캠핑 브이로그")).toBeInTheDocument();
+    });
+  });
+
+  describe("modal accessibility (useModalA11y)", () => {
+    it("closes the keyword detail modal on Escape and restores focus to the row that opened it", async () => {
+      vi.stubGlobal("fetch", vi.fn(keywordHistoryFetch));
+      const user = userEvent.setup();
+
+      render(<HomeClient />);
+      const trigger = await screen.findByRole("button", { name: "가을 캠핑 브이로그" });
+      trigger.focus();
+      await user.click(trigger);
+
+      await screen.findByRole("dialog", { name: "가을 캠핑 브이로그 순위 추이" });
+      await user.keyboard("{Escape}");
+
+      await waitFor(() => {
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+      });
+      expect(document.activeElement).toBe(trigger);
+    });
+
+    it("moves focus into the auth modal on open and traps Tab within it", async () => {
+      const user = userEvent.setup();
+      render(<HomeClient />);
+      await screen.findByText("가을 캠핑 브이로그");
+
+      await user.click(screen.getByRole("button", { name: "로그인" }));
+      const dialog = await screen.findByRole("dialog", { name: "로그인" });
+
+      // Focus should have moved into the dialog (its close button, the first
+      // focusable element), not stayed on the trigger or reset to <body>.
+      expect(dialog.contains(document.activeElement)).toBe(true);
+      expect(document.activeElement).not.toBe(document.body);
+    });
   });
 });
