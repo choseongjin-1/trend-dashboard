@@ -3289,3 +3289,134 @@ ID를 사용해 `GET`/`PATCH`가 내부적으로 수행하는 것과 **완전히
 데이터로 종단 검증 완료). `supabase/migrations/APPLIED.md`에서 `0004`를
 `applied`(2026-08-25)로 갱신. 마이그레이션 관련 블로커 모두 해소 — 남은 것은 프론트
 인증 UI를 통한 실 로그인 세션에서의 최종 확인뿐(이 세션 권한 밖, 계속 표준 한계로 보고).
+
+## 반복 13 — 프론트엔드 (워치리스트 순위 변동 알림 루프 완성)
+
+### [배경]
+백엔드가 `GET /api/watchlist`에 `current_rank`/`last_seen_rank`/`last_seen_at`을,
+`PATCH /api/watchlist {id}`(현재 순위를 새 베이스라인으로 승인)를 실 데이터로 라이브
+검증까지 마쳐 출하함 — 데이터 배관은 완성됐지만 UI가 아직 아무것도 소비하지 않음. 이번
+라운드가 그 소비 단.
+
+### [목표]
+1. `src/lib/watchlist.ts`를 실제 응답 형태(반복 6/8에서 했던 `history.ts`/`watchlist.ts`
+   재조정과 동일한 규율)로 갱신, `PATCH` 클라이언트 신설
+2. `current_rank`가 `last_seen_rank`와 의미 있게 다를 때 눈에 띄는 표시("3위 → 1위" 등,
+   기존 행별 `RankDelta`—스냅샷 간 일별 변동—와는 다른 개념) — `last_seen_rank`가
+   `null`(첫 확인, 베이스라인 없음)과 `current_rank`가 `null`(순위 이탈, "변화 없음"과
+   조용히 동일시하면 안 되는 별개 상태) 각각 처리
+3. 사용자가 실제로 그 키워드의 상세를 볼 때(`KeywordDetailModal`을 워치리스트 항목으로
+   여는 것이 자연스러운 트리거) `PATCH`로 승인 — 승인 후 "변동" 표시가 페이지 새로고침
+   없이 갱신/해제
+4. 실 로그인 세션을 구동할 방법이 이 세션엔 없음(백엔드 트랙이 반복적으로 지적한 표준
+   한계) — 검증 가능한 것만: null/non-null 조합 목업 테스트, 확인-온-뷰 플로우, 로그아웃
+   상태 점검. 실 세션 대비 미검증 항목은 로그에 명시
+5. lint/test/build 클린, 증거 첨부
+
+### [계획]
+1. `git merge main` — 백엔드의 `0004` 마이그레이션+`current_rank`/PATCH 로직만 추가,
+   프론트 파일 충돌 없음(fast-forward)
+2. `src/app/api/watchlist/route.ts` 직접 조회 — GET/POST/PATCH/DELETE 4개 핸들러의 실제
+   응답 스키마를 코드에서 직접 확인(추측 금지, 반복 6 규율 반복): GET은 매 항목에
+   `current_rank` 포함, POST는 `.select()`에 `current_rank`가 없어 **응답에서 그 필드
+   자체가 없음**(단순히 `null`이 아니라 키 자체 부재), PATCH는 서버가 직접 계산한
+   `current_rank`로 응답
+3. `WatchlistRow`에 `last_seen_rank: number|null`, `last_seen_at: string|null`,
+   `current_rank?: number|null`(POST 응답엔 부재 가능하니 optional) 추가, 타입가드도 이
+   구분(부재 vs `null`)을 정확히 반영
+4. 순수 함수 `describeRankChange(row)`를 신설해 5가지 상태를 명시적으로 구분: `unknown`
+   (POST 직후처럼 `current_rank` 자체가 없음) / `dropped`(명확히 순위 밖, `current_rank
+   === null`) / `new`(순위는 있으나 `last_seen_rank === null`이라 비교 불가) / `unchanged`
+   / `moved`(from/to) — "부재"와 "확정된 null"을 같은 걸로 뭉뚱그리지 않도록 처음부터
+   타입 레벨에서 분리
+5. `WatchlistPanel`을 "보기"(칩 클릭 → 상세 열기)와 "제거"(별도 ✕ 버튼)로 분리 — 기존엔
+   칩 전체가 제거 버튼이라 "보기" 동작을 넣을 자리가 없었음
+6. `HomeClient.tsx`: 워치리스트 항목 전용 `viewWatchlistItem(keyword, itemRegion)` 신설
+   (기존 `openDetail`은 클로저의 현재 `region` state를 쓰는데, 워치리스트 항목은 다른
+   지역일 수 있어 그대로 쓰면 URL에 잘못된 지역이 잠깐 들어감 — 항목 자신의 region을
+   직접 넘기고 `setRegion`도 같이 호출해 탭 하이라이트까지 맞춤), `detailKeyword`/`region`
+   변경 시 워치리스트에서 매칭되는 항목을 찾아 `current_rank !== last_seen_rank`일
+   때만 `PATCH` 호출하는 이펙트 신설(이미 같으면 스킵 — 불필요한 호출 방지 + 승인 후
+   재실행되어도 가드에 걸려 무한루프 안 됨)
+7. 신규 유닛 테스트(`describeRankChange` 5개 케이스) + `page.test.tsx`에 배지 렌더링/
+   확인-온-뷰/로그아웃 상태 통합 테스트 추가
+8. lint → test → build, 실 dev 서버로 로그아웃 상태만 스크린샷(로그인 상태는 검증 불가
+   — [한계] 참고), dev 서버 종료
+
+### [실행 + 관찰]
+
+**`src/app/api/watchlist/route.ts` 실제 계약 확인**(추측 없이 코드 직접 조회): GET은
+`select("id, keyword, region, created_at, last_seen_rank, last_seen_at")` 후 각 행에
+`current_rank`(스냅샷 조회로 계산)를 붙여 반환. POST는 `.select()`에 `current_rank`가
+빠져 있어 **생성 직후 응답엔 그 키 자체가 없음** — `null`이 아니라 정말 없음. 이 차이를
+`describeRankChange`의 `unknown` 케이스로 명시적으로 분리(반복 8/9 등에서 이미 자리잡은
+"부재와 null을 구분한다" 원칙 재적용).
+
+**신규 파일**: `src/lib/watchlist.test.ts`(`describeRankChange` 5케이스 — new/dropped/
+unchanged/moved-up/moved-down, `unknown` 포함).
+
+**수정 파일**: `src/lib/watchlist.ts`(`WatchlistRow` 필드 확장, 타입가드 갱신,
+`acknowledgeWatchlistItem` 신설, `describeRankChange` 신설), `src/components/
+WatchlistPanel.tsx`(보기/제거 버튼 분리, `RankChangeBadge` 렌더링), `src/app/
+HomeClient.tsx`(`viewWatchlistItem`, 확인-온-뷰 이펙트, `WatchlistPanel`에 `onView` 연결),
+`src/app/page.test.tsx`(신규 4개 테스트: 로그아웃 시 워치리스트 UI 전무, 5가지 배지 조합,
+확인-온-뷰로 배지가 새로고침 없이 갱신, 패널 자체 제거 버튼).
+
+**구현 중 발견한 실제 버그 2건**(둘 다 스크린 리더 접근성과도 맞물림):
+1. 워치리스트 패널의 새 ✕ 제거 버튼에 `aria-label="워치리스트에서 제거"`를 달았더니,
+   랭킹 행의 별표 토글 버튼도 워치 중일 땐 정확히 같은 `aria-label`을 씀 — 두 버튼의
+   접근 가능한 이름이 우연히 동일해져(같은 키워드가 패널과 랭킹 리스트 양쪽에 동시에
+   존재할 때) 테스트에서 "다중 매치"로 발견. `${keyword} 워치리스트에서 제거`로 키워드를
+   포함시켜 고유하게 만듦 — 항목이 여러 개일 때 스크린 리더 사용자에게도 더 명확한 이름이라
+   부수적으로 접근성도 개선됨.
+2. "보기" 버튼에 별도 `aria-label`을 안 주고 텍스트 콘텐츠(지역+키워드+배지)로만
+   구분하려 했더니, 배지 텍스트("5위 → 1위")까지 접근 가능한 이름에 섞여 들어가 테스트
+   쿼리가 불안정해짐 — `${keyword} 상세 보기`로 명시적 `aria-label`을 줘서 배지 유무와
+   무관하게 안정적인 이름을 갖도록 정리.
+
+**`npm run lint`** — 통과(에러/경고 없음).
+
+**`npm run build`** — 1차 실행에서 `page.test.tsx`의 기존 POST 목업 픽스처가
+`last_seen_rank`/`last_seen_at` 없이 `WatchlistRow`를 구성해 타입체크 실패(`error TS2739`)
+→ 실제 POST 응답 형태(두 필드는 `null`로 존재, `current_rank`만 부재)에 맞게 픽스처
+보정 → 재실행 통과.
+
+**`npm run test`**
+```
+ Test Files  11 passed (11)
+      Tests  89 passed (89)
+```
+89개 전부 통과(기존 77개 + `watchlist.test.ts` 5개 + `page.test.tsx` 신규 4개) — 2차
+디버깅 라운드에서 잡은 것: (a) 이미 워치리스트에 있는 키워드로 시작하는 두 신규 테스트가
+`findByText`로 "로딩 완료" 확인할 때 그 키워드가 패널과 랭킹 리스트 양쪽에 동시에 존재해
+"다중 매치" 실패 → `findAllByText`로 교체, (b) 위에서 기록한 두 아이콘 버튼 이름 충돌.
+
+**`npm run build`(최종)** — 클린, 라우트 구성 변화 없음(UI 전용 변경).
+
+**로그아웃 상태 실측 스크린샷** (dev 서버 `-p 3008`, 실 데이터): "내 워치리스트" 텍스트
+0개, `aria-label*="워치리스트"` 버튼 0개 — 워치리스트 UI가 정말 아무 흔적도 안 남기고
+완전히 사라짐을 실측 확인(스크린샷 첨부, 랭킹 리스트 자체는 정상 표시).
+
+**dev 서버 종료**: `lsof -ti:3008 | xargs kill` 후 포트 확인 → 정상 종료. 스크래치 스크립트
+삭제, 커밋 대상 아님.
+
+### [검증] — 성공 기준 대조
+1. `watchlist.ts`가 실제 GET/POST/PATCH 응답 형태를 정확히 반영(POST의 `current_rank`
+   부재까지) → **충족**
+2. 5가지 조합(모름/이탈/신규/변화없음/이동) 모두 구분된 표시, null 두 종류(부재 vs 확정
+   이탈)를 하나로 뭉개지 않음 → **충족**
+3. 상세 보기 시 `PATCH` 자동 호출, 배지가 새로고침 없이 갱신(테스트로 확인) → **충족**
+4. 목업 테스트로 null/non-null 조합 + 확인-온-뷰 플로우 + 로그아웃 상태(목업+실 브라우저
+   이중 확인) → **충족**. 실 로그인 세션 대비 검증은 아래 [한계] 참고
+5. lint/test(89개)/build 클린, 증거 첨부 → **충족**
+
+### [한계] — 실 세션 대비 미검증 (지시대로 명시, 해결 시도 안 함)
+- 실제 Supabase 인증 세션에서 워치리스트에 항목을 추가하고, 시간이 지나 순위가 실제로
+  바뀐 뒤 상세를 열어 배지가 뜨는지/PATCH 후 사라지는지는 이 세션에서 구동 불가(백엔드
+  트랙이 반복 지적한 것과 동일한 헤드리스 로그인 불가 한계). 백엔드가 라우트 로직 자체는
+  실 DB로 종단 검증했으므로(바로 위 반복 항목 참고) API 계약은 신뢰할 수 있는 근거가
+  있으나, 프론트 UI가 실 세션에서 그 응답을 정확히 소비하는지는 다음에 실 로그인이
+  가능해지는 시점에 재확인 필요.
+
+### [종료]
+5개 성공 기준 모두(4번은 목업 범위 내에서) 실측 증거로 충족. `frontend-loop`에 커밋 진행.

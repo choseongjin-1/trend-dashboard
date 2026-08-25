@@ -241,6 +241,10 @@ describe("Home dashboard", () => {
               keyword: body.keyword,
               region: body.region,
               created_at: "2026-08-24T00:00:00.000Z",
+              last_seen_rank: null,
+              last_seen_at: null,
+              // POST's real response omits current_rank entirely (see
+              // src/app/api/watchlist/route.ts) — matched here for fidelity.
             };
             watchlistState = [...watchlistState, row];
             return Promise.resolve(jsonResponse(row, { status: 201 }));
@@ -474,6 +478,194 @@ describe("Home dashboard", () => {
       // focusable element), not stayed on the trigger or reset to <body>.
       expect(dialog.contains(document.activeElement)).toBe(true);
       expect(document.activeElement).not.toBe(document.body);
+    });
+  });
+
+  describe("watchlist rank-change notifications", () => {
+    it("shows no watchlist UI at all when logged out", async () => {
+      render(<HomeClient />);
+      await screen.findByText("가을 캠핑 브이로그");
+
+      expect(screen.queryByText("내 워치리스트")).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "워치리스트에 추가" })).not.toBeInTheDocument();
+    });
+
+    it("shows the right indicator for each current/last-seen rank combination", async () => {
+      mockUseAuth.mockReturnValue({ ...loggedOut, user: { email: "creator@example.com" } });
+      const entries: WatchlistRow[] = [
+        {
+          id: "1",
+          keyword: "새로운키워드",
+          region: "KR",
+          created_at: "2026-08-24T00:00:00.000Z",
+          last_seen_rank: null,
+          last_seen_at: null,
+          current_rank: 5,
+        },
+        {
+          id: "2",
+          keyword: "이탈한키워드",
+          region: "KR",
+          created_at: "2026-08-24T00:00:00.000Z",
+          last_seen_rank: 3,
+          last_seen_at: "2026-08-24T00:00:00.000Z",
+          current_rank: null,
+        },
+        {
+          id: "3",
+          keyword: "그대로키워드",
+          region: "KR",
+          created_at: "2026-08-24T00:00:00.000Z",
+          last_seen_rank: 4,
+          last_seen_at: "2026-08-24T00:00:00.000Z",
+          current_rank: 4,
+        },
+        {
+          id: "4",
+          keyword: "상승키워드",
+          region: "KR",
+          created_at: "2026-08-24T00:00:00.000Z",
+          last_seen_rank: 5,
+          last_seen_at: "2026-08-24T00:00:00.000Z",
+          current_rank: 1,
+        },
+        {
+          id: "5",
+          keyword: "하락키워드",
+          region: "KR",
+          created_at: "2026-08-24T00:00:00.000Z",
+          last_seen_rank: 1,
+          last_seen_at: "2026-08-24T00:00:00.000Z",
+          current_rank: 8,
+        },
+      ];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+          const url = typeof input === "string" ? input : input.toString();
+          if (url.includes("/api/watchlist")) {
+            if (!init?.method || init.method === "GET") return Promise.resolve(jsonResponse(entries));
+          }
+          return baseFetchImplementation(input);
+        }),
+      );
+
+      render(<HomeClient />);
+      await screen.findByText("가을 캠핑 브이로그");
+      const panel = (await screen.findByText("내 워치리스트")).closest("section")!;
+
+      // "new" — ranked now, never acknowledged: keyword shown, no badge text.
+      expect(within(panel).getByText("새로운키워드")).toBeInTheDocument();
+      // "dropped" — confirmed out of the current rankings.
+      expect(within(panel).getByText("순위 이탈")).toBeInTheDocument();
+      // "unchanged".
+      expect(within(panel).getByText("4위")).toBeInTheDocument();
+      // "moved" — up (improved) and down (declined).
+      expect(within(panel).getByText("5위 → 1위")).toBeInTheDocument();
+      expect(within(panel).getByText("1위 → 8위")).toBeInTheDocument();
+    });
+
+    it("acknowledges a watchlisted keyword's rank when its detail is viewed, updating the badge without a reload", async () => {
+      mockUseAuth.mockReturnValue({ ...loggedOut, user: { email: "creator@example.com" } });
+      let watchlistState: WatchlistRow[] = [
+        {
+          id: "1",
+          keyword: "가을 캠핑 브이로그",
+          region: "KR",
+          created_at: "2026-08-24T00:00:00.000Z",
+          last_seen_rank: 5,
+          last_seen_at: "2026-08-24T00:00:00.000Z",
+          current_rank: 1,
+        },
+      ];
+      let patchCalled = false;
+      vi.stubGlobal(
+        "fetch",
+        vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+          const url = typeof input === "string" ? input : input.toString();
+          if (url.includes("/api/watchlist")) {
+            if (!init?.method || init.method === "GET") {
+              return Promise.resolve(jsonResponse(watchlistState));
+            }
+            if (init.method === "PATCH") {
+              patchCalled = true;
+              const body = JSON.parse(init.body as string) as { id: string };
+              watchlistState = watchlistState.map((w) =>
+                w.id === body.id ? { ...w, last_seen_rank: w.current_rank ?? null } : w,
+              );
+              const updated = watchlistState.find((w) => w.id === body.id)!;
+              return Promise.resolve(jsonResponse(updated));
+            }
+          }
+          return keywordHistoryFetch(input);
+        }),
+      );
+      const user = userEvent.setup();
+
+      render(<HomeClient />);
+      // The keyword legitimately appears twice here (watchlist panel +
+      // ranking row), unlike the empty-watchlist tests above.
+      await screen.findAllByText("가을 캠핑 브이로그");
+      const panel = (await screen.findByText("내 워치리스트")).closest("section")!;
+      expect(within(panel).getByText("5위 → 1위")).toBeInTheDocument();
+
+      await user.click(within(panel).getByRole("button", { name: "가을 캠핑 브이로그 상세 보기" }));
+      await screen.findByRole("dialog", { name: "가을 캠핑 브이로그 순위 추이" });
+
+      await waitFor(() => expect(patchCalled).toBe(true));
+      await waitFor(() => {
+        expect(within(panel).queryByText("5위 → 1위")).not.toBeInTheDocument();
+      });
+      expect(within(panel).getByText("1위")).toBeInTheDocument();
+    });
+
+    it("removes an entry via the watchlist panel's own remove button", async () => {
+      mockUseAuth.mockReturnValue({ ...loggedOut, user: { email: "creator@example.com" } });
+      let watchlistState: WatchlistRow[] = [
+        {
+          id: "1",
+          keyword: "가을 캠핑 브이로그",
+          region: "KR",
+          created_at: "2026-08-24T00:00:00.000Z",
+          last_seen_rank: null,
+          last_seen_at: null,
+          current_rank: 1,
+        },
+      ];
+      vi.stubGlobal(
+        "fetch",
+        vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+          const url = typeof input === "string" ? input : input.toString();
+          if (url.includes("/api/watchlist")) {
+            if (!init?.method || init.method === "GET") return Promise.resolve(jsonResponse(watchlistState));
+            if (init.method === "DELETE") {
+              const id = new URL(url, "http://localhost").searchParams.get("id");
+              watchlistState = watchlistState.filter((w) => w.id !== id);
+              return Promise.resolve(jsonResponse({ ok: true }));
+            }
+          }
+          return baseFetchImplementation(input);
+        }),
+      );
+      const user = userEvent.setup();
+
+      render(<HomeClient />);
+      // The keyword legitimately appears twice here (watchlist panel +
+      // ranking row), unlike the empty-watchlist tests above.
+      await screen.findAllByText("가을 캠핑 브이로그");
+      const panel = (await screen.findByText("내 워치리스트")).closest("section")!;
+
+      await user.click(
+        within(panel).getByRole("button", { name: "가을 캠핑 브이로그 워치리스트에서 제거" }),
+      );
+
+      // The panel itself stays (watchlist is now an empty array, not
+      // unavailable) — its empty-state copy takes over.
+      await waitFor(() => {
+        expect(
+          within(panel).getByText("랭킹에서 ☆ 버튼을 눌러 추적할 키워드를 추가하세요."),
+        ).toBeInTheDocument();
+      });
     });
   });
 });

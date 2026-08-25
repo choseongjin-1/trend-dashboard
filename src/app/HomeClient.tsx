@@ -7,7 +7,13 @@ import { fetchTrendsHistory, toHistoryMap, computeDelta, TrendHistoryPoint } fro
 import { fetchKeywordHistory } from "@/lib/trends/keywordHistory";
 import { REGIONS, DEFAULT_REGION } from "@/lib/trends/regions";
 import { sourceLabel } from "@/lib/trends/sourceLabel";
-import { fetchWatchlist, addToWatchlist, removeFromWatchlist, WatchlistRow } from "@/lib/watchlist";
+import {
+  fetchWatchlist,
+  addToWatchlist,
+  removeFromWatchlist,
+  acknowledgeWatchlistItem,
+  WatchlistRow,
+} from "@/lib/watchlist";
 import { useAuth } from "@/lib/auth/useAuth";
 import { RankDelta } from "@/components/RankDelta";
 import { RankSparkline } from "@/components/RankSparkline";
@@ -164,6 +170,41 @@ export function HomeClient() {
     setWatchlist((prev) => (prev === null ? prev : prev.filter((w) => w.id !== id)));
   }, []);
 
+  // Opening a watchlist item's detail needs its OWN region, not whatever
+  // region tab happens to be active — using the closure's `region` here
+  // (via openDetail) would briefly push the wrong region into the URL
+  // until the sync effect above corrected it. Build the URL directly with
+  // the item's region instead, and switch the active tab to match.
+  const viewWatchlistItem = useCallback(
+    (keyword: string, itemRegion: string) => {
+      setRegion(itemRegion);
+      const params = new URLSearchParams(searchParams.toString());
+      params.set("keyword", keyword);
+      params.set("region", itemRegion);
+      router.push(`${pathname}?${params.toString()}`, { scroll: false });
+    },
+    [searchParams, pathname, router],
+  );
+
+  // Acknowledging is "you actually looked at this keyword" — fires whenever
+  // the detail modal is open for a keyword that's on the watchlist for the
+  // active region, regardless of how it was opened (watchlist chip or a
+  // ranking row). Skipped when there's nothing to acknowledge (already at
+  // the current rank, or no rank data yet) to avoid a pointless PATCH on
+  // every view — this also prevents the effect from looping once the
+  // acknowledged row comes back with last_seen_rank === current_rank.
+  useEffect(() => {
+    if (!detailKeyword || watchlist === null) return;
+    const entry = watchlist.find((w) => w.keyword === detailKeyword && w.region === region);
+    if (!entry || entry.current_rank === entry.last_seen_rank) return;
+    acknowledgeWatchlistItem(entry.id).then((updated) => {
+      if (!updated) return;
+      setWatchlist((prev) =>
+        prev === null ? prev : prev.map((w) => (w.id === updated.id ? updated : w)),
+      );
+    });
+  }, [detailKeyword, region, watchlist]);
+
   const isEmpty = !!data && data.items.length === 0;
   const watchlistAvailable = !!auth.user && watchlist !== null;
   // Show a per-item source tag only once it's actually informative — no
@@ -241,7 +282,11 @@ export function HomeClient() {
         )}
 
         {watchlistAvailable && (
-          <WatchlistPanel entries={watchlist ?? []} onRemove={removeWatchlistEntry} />
+          <WatchlistPanel
+            entries={watchlist ?? []}
+            onRemove={removeWatchlistEntry}
+            onView={viewWatchlistItem}
+          />
         )}
 
         {data && !isEmpty && (
