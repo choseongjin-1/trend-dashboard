@@ -2833,3 +2833,44 @@ HTML(`og-source-flip.html`)을 그대로 재사용해 재렌더링 — `4f728de`
 
 ### [종료]
 4개 성공 기준 모두 실측 증거로 충족. `frontend-loop`에 커밋 진행.
+
+---
+
+## 통합 (merge) — `backend-loop` ← `frontend-loop` (다크 FLIP 원복, `775ba6c`)
+
+> `backend-loop`(HEAD `94301a2`)에서 `git merge frontend-loop`(`775ba6c`) 실행. 이번엔
+> `backend-loop`가 그 사이 새 커밋 없이 정확히 `94301a2`에 머물러 있었고 `frontend-loop`가
+> 그 바로 위에 직접 이어져 있어, 충돌 없는 순수 fast-forward(`94301a2..775ba6c`)로 완료
+> — LOOP_LOG.md 병합 조립 자체가 필요 없었음. 그래도 "또 다른 라이브 배포"라 검증은 동일
+> 수준으로 꼼꼼히 진행.
+
+### [검증 — 실측]
+```
+npm run lint   → 빈 출력, exit 0
+npm run test   → Test Files 10 passed (10), Tests 71 passed (71) (불변, fast-forward라 당연)
+npm run build  → Compiled successfully, 동일 9개 라우트 정상 생성
+```
+
+**`npm run dev -- -p 3001` + curl (실 크리덴셜, 8개 라우트 전부)**
+```
+GET  /                                                       → HTTP 200
+GET  /api/trends?region=KR   → sources:['youtube','hackernews'], mocked:False,
+                                아이템 소스 혼합 {hackernews, youtube} — 원복 후에도
+                                다중 소스 블렌드 정상
+GET  /api/trends/history?region=KR                           → HTTP 200
+GET  /api/trends/keyword-history?keyword=HYBE&region=KR      → HTTP 200
+GET  /auth/callback (code 없음)                                → HTTP 307
+GET  /api/watchlist (세션 없음)                                 → HTTP 401
+GET  /opengraph-image.png                                     → HTTP 200, `file`로 실제
+                                                                  PNG(1200×630) 확인
+POST /api/cron/refresh-trends (secret 없음/정상)                → HTTP 401 / 200
+```
+rate limiting 회귀 확인: `/api/trends?region=US` 35회 병렬 발사 → 200/429 혼재(정상).
+로그 전체 스캔: 이미 알려진 클래스 제외 `error|warn|fail` **0건**, 모든 `GET |POST ` 로그
+라인이 200/401/429/307 중 하나로만 끝남(이탈 0건). 서버 종료 후 포트 확인 → 정상 종료.
+
+### [결론]
+`775ba6c`(다크 FLIP 원복) 반영 후 lint/test(71개)/build/dev 8라우트 curl + rate-limit
+회귀 확인까지 전부 그린 — 순수 fast-forward라 병합 충돌 자체는 없었지만 라이브 배포
+전이라 검증은 생략하지 않음. `backend-loop`가 이미 `775ba6c`(fast-forward 결과)이므로
+별도 머지 커밋 없이 `main`으로 fast-forward·푸시 진행.
