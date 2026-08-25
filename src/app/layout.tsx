@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Black_Han_Sans, Nanum_Gothic_Coding, IBM_Plex_Sans_KR } from "next/font/google";
+import { getSiteUrl } from "@/lib/siteUrl";
 import "./globals.css";
 
 const blackHanSans = Black_Han_Sans({
@@ -25,7 +26,7 @@ const nanumGothicCoding = Nanum_Gothic_Coding({
   weight: ["400", "700"],
 });
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
+const SITE_URL = getSiteUrl();
 const TITLE = "FLIP — 지금 뜨는 키워드를 가장 먼저";
 const DESCRIPTION =
   "인기 급상승 신호를 실시간으로 감지하는 키워드 랭킹 보드. 워치리스트에 담아두면 순위가 바뀔 때마다 가장 먼저 알 수 있어요.";

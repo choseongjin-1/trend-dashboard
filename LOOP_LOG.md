@@ -3749,3 +3749,289 @@ Supabase origin 하나로만 제한해 "와일드카드로 방어를 무력화"�
 4개 성공 기준 모두 실측 증거로 충족 — curl 헤더 확인뿐 아니라 실제 헤드리스 브라우저로
 로그인 시도까지 수행해 CSP 위반 0건을 dev/prod 양쪽에서 확인. 마이그레이션/DB 변경
 없음(순수 설정 변경), 블로커 없음.
+
+## 반복 15 — 프론트엔드 (SEO 크롤링 + 정적 요금제 페이지)
+
+### [배경] 및 [목표]
+사이트가 공개된 상태라 두 가지가 필요: (1) SEO 크롤링 — Next.js 파일 컨벤션으로
+`sitemap.ts`/`robots.ts`(정적 파일 없이), 홈 페이지 최소 포함(지역 변형은 선택), `/api/*`
+`/auth/*`는 크롤링 차단. (2) 정적 `/pricing` 페이지 — 지금 제품에는 무료/프리미엄 가치를
+설명하는 곳이 어디에도 없음(Stripe 연동 자체는 별도로 계정 이슈로 막혀있어, 이번 건 순수
+정보성 페이지). 무료 티어(오늘의 랭킹, 기본 검색) + 프리미엄 티어(실제로 만들어진 것 대비
+차별화될 만한 것 — 판단은 자유, CSV 내보내기처럼 아직 없지만 "예정"으로 명시하는 건 허용) +
+정직한 CTA(가짜 "구매하기" 버튼 금지, "곧 출시"/대기자 명단 식). FLIP 고유의 보이스/디자인
+시스템 유지 — 템플릿처럼 보이기 가장 쉬운 페이지 유형이라 다른 화면과 같은 수준의 디자인
+주의 요구됨.
+
+### [계획]
+1. `git merge main` — fast-forward, 코드 충돌 없음(로그만 추가된 상태)
+2. 기존 컨벤션 확인: `layout.tsx`의 `NEXT_PUBLIC_SITE_URL` 폴백 패턴 재사용,
+   `src/lib/trends/regions.ts`의 `REGIONS`(KR/US/JP) 재사용
+3. `sitemap.ts`: 홈("/") + 지역별 쿼리 변형(`/?region=KR|US|JP`, 지역마다 실제로 다른
+   랭킹 콘텐츠를 서빙하므로 별도 엔트리로 정당화) + `/pricing`. 갱신 주기는 실제 cron
+   갱신 빈도에 맞춰 홈/지역은 `hourly`, 요금제는 `monthly`
+4. `robots.ts`: `allow: "/"`, `disallow: ["/api/", "/auth/"]`, sitemap 링크 포함
+5. `/pricing`: 클라이언트 상태·`useSearchParams` 불필요 → 순수 서버 컴포넌트로, Suspense
+   불필요. 디자인: 제네릭 SaaS 가격표(체크 아이콘 원형 배지, "Most Popular" 리본 등) 대신
+   기존 화면의 시각 언어 재사용 — "확정된" 무료 티어는 랭킹 행과 같은 solid panel/border,
+   "아직 실재하지 않는" 프리미엄 티어는 기존 빈 상태(EmptyFlaps)와 같은 dashed border로
+   표현. `rising`/`falling`은 순위 델타 전용이라는 기존 색상 규칙(globals.css 주석) 유지 —
+   장식용으로 쓰지 않음
+6. 프리미엄 CTA: 실제 `<button disabled>` — 클릭하면 아무 일도 안 일어나는 가짜 링크나
+   조용히 실패하는 액션이 아니라, 애초에 상호작용 불가능한 상태임을 명시적으로 보여줌 +
+   보조 텍스트로 "출시되면 이 페이지에서 안내"
+7. 홈 헤더에 `/pricing` 링크 추가(발견 가능하도록 — 페이지가 고아 상태로 남지 않게)
+8. 신규 테스트(`pricing/page.test.tsx`), lint → test → build, dev 서버로 curl(sitemap.xml/
+   robots.txt/pricing 상태 코드·헤더) + Playwright 스크린샷(데스크톱/모바일) + axe 스캔 +
+   포커스 순서 확인, 스크래치 스크립트 정리 후 dev 서버 종료
+
+### [실행 + 관찰]
+
+**신규 파일**: `src/app/sitemap.ts`, `src/app/robots.ts`, `src/app/pricing/page.tsx`,
+`src/app/pricing/page.test.tsx`.
+**수정 파일**: `src/app/HomeClient.tsx`(헤더에 "요금제" 링크 1개 추가, `next/link` import).
+
+**빌드 결과** — `/pricing`·`/robots.txt`·`/sitemap.xml` 전부 정적(`○`)으로 생성됨(빌드
+타임에 완전히 결정 가능한 콘텐츠라 별도 런타임 비용 없음).
+
+**`npm run lint`** — 통과. **`npm run build`** — 클린.
+
+**`npm run test`**
+```
+ Test Files  12 passed (12)
+      Tests  102 passed (102)
+```
+102개 전부 통과(기존 96개 + 신규 6개: h1/h2 헤딩 존재, 무료 티어 기능 노출, 프리미엄
+티어 기능 노출, 무료 CTA가 실제 "/" 링크인지, 프리미엄 CTA가 진짜 `disabled` 버튼(가짜
+링크 아님)인지 + 보조 안내 문구, 헤더 워드마크가 "/"로 연결되는지).
+
+**실 브라우저 검증** (dev 서버 `-p 3009`):
+```
+GET /sitemap.xml → 200, content-type: application/xml
+  <url> 5개: "/", "/?region=KR|US|JP"(각 hourly, 0.8), "/pricing"(monthly, 0.5)
+GET /robots.txt  → 200, content-type: text/plain
+  User-Agent: *
+  Allow: /
+  Disallow: /api/
+  Disallow: /auth/
+  Sitemap: http://localhost:3000/sitemap.xml
+GET /pricing → 200
+```
+
+**구현 중 axe 스캔으로 발견한 실제 버그 1건** (검사가 아니라 스캔 결과로 발견): 프리미엄
+카드를 "덜 확정된" 느낌으로 흐리게 하려고 `text-flap-dim/70`, `/60` 같은 투명도를 낮춘
+변형을 새로 만들어 썼는데, `--casing`(#0e0e10) 배경 위에서 실제 대비가 2.67~3.22:1로
+WCAG AA 기준(4.5:1) 미달 — axe가 `color-contrast` 위반 2건으로 정확히 잡아냄. 기존
+화면 전역에서 이미 검증된 불투명 `text-flap-dim`(투명도 없음)으로 전부 교체해 해결 —
+"아직 없다"는 느낌은 border-dashed와 아이콘(✓ vs ·) 차이만으로 충분히 전달되므로 텍스트
+자체의 대비를 낮추는 방식은 애초에 불필요한 리스크였음.
+
+```
+axe violations (수정 전): 1건 (color-contrast, 노드 2개)
+axe violations (수정 후): 0건
+헤딩 순서: H1 "요금제" → H2 "무료" → H2 "프리미엄" (정상 계층)
+포커스 순서: FLIP 워드마크 → "무료로 시작하기"(프리미엄의 disabled 버튼은 건너뜀 — 확인:
+  disabled 버튼에 강제 focus() 시도해도 activeElement로 잡히지 않음, 즉 진짜 비활성)
+```
+데스크톱(900×700)·모바일(390×844) 스크린샷 확인 — 모바일에서 카드가 `sm:flex-row` →
+세로 스택으로 정상 전환, `scrollWidth > clientWidth` 확인 결과 가로 오버플로우 없음.
+
+**dev 서버 종료**: `lsof -ti:3009 | xargs kill` 후 포트 확인 → 정상 종료. 스크래치
+스크립트(`.scratch-pricing*.mjs`) 전부 삭제, 커밋 대상 아님.
+
+### [검증] — 성공 기준 대조
+1. sitemap.xml/robots.txt 정상 렌더(curl + 내용 확인) → **충족**
+2. 요금제 페이지가 디자인 시스템에 부합(스크린샷, 데스크톱+모바일) → **충족** — 기존 빈
+   상태/카드 스타일 재사용, 장식적 rising/falling 색상 사용 안 함
+3. 접근성(기존 a11y 패턴 재사용 — 헤딩 구조, 포커스 순서) → **충족**(axe 0 violations,
+   헤딩 계층 정상, disabled 버튼이 탭 순서에서 정확히 제외됨) — 스캔 중 실제 대비 버그
+   1건 발견/수정
+4. 신규 라우트 테스트 → **충족**(6개 신규, 102개 전체 통과)
+5. lint/build 클린 → **충족**
+
+### [개선/반복]
+1회 반복으로 모든 기준 충족, 추가 반복 불필요(규칙 9). 정직하게 기록할 점: 프리미엄
+기능 목록("CSV 내보내기", "히스토리 전체 보관" 등)은 실제로 구현되지 않은, 페이지 카피
+상으로만 존재하는 항목들 — 요청에 명시적으로 허용된 범위("stated-but-not-yet-built perk
+is fine")이며, CTA가 정직하게 disabled 상태이므로 실제로 결제/제공을 약속하지 않음.
+결제 연동(Stripe) 자체는 이번 라운드 범위 밖.
+
+### [종료]
+5개 성공 기준 모두 실측 증거로 충족. `frontend-loop`에 커밋 진행.
+
+## 반복 16 — 프론트엔드 (SITE_URL 폴백 체인 강화)
+
+### [배경] 및 [목표]
+오케스트레이터가 실제 프로덕션에서 발견: Vercel 환경변수에 `NEXT_PUBLIC_SITE_URL`이
+설정된 적이 없어 `layout.tsx`의 OG/Twitter 메타데이터와 반복 15에서 만든 `sitemap.ts`가
+프로덕션에서도 조용히 `http://localhost:3000`으로 폴백 중이었음(실제 프로덕션 사이트를
+curl해서 `og:url`/`og:image`가 localhost로 나오는 것까지 확인됨) — OG 메타데이터가
+나간 시점부터 모든 공유 링크 미리보기가 깨져 있었고, 이번 sitemap도 그대로 배포됐다면
+검색엔진에 localhost URL을 제출했을 것. 사용자가 Vercel에 값을 직접 설정하는 건
+별도로 진행 중이지만, 이 클래스의 버그가 조용히 재발하지 않도록 폴백 체인 자체를
+견고하게 만드는 게 이번 라운드의 목표: `NEXT_PUBLIC_SITE_URL`(명시적 override) →
+`VERCEL_PROJECT_PRODUCTION_URL`(Vercel이 별도 설정 없이 자동 제공하는, preview마다
+바뀌지 않는 안정적 프로덕션 도메인) → `http://localhost:3000`(로컬 전용 최후 수단).
+
+### [계획]
+1. `git merge main` — 이번엔 이미 최신(원격 main이 아직 반복 15를 병합하지 않은
+   상태였음, 코드 충돌 없음)
+2. 중복 확인: `SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"`
+   패턴이 `layout.tsx`/`sitemap.ts`/`robots.ts` 세 곳에 그대로 복붙되어 있었음(반복 15
+   때 내가 직접 그렇게 만듦) → `src/lib/siteUrl.ts`에 `getSiteUrl()` 공유 헬퍼로 추출
+3. 폴백 순서 구현: explicit `NEXT_PUBLIC_SITE_URL` → `VERCEL_PROJECT_PRODUCTION_URL`을
+   `https://`로 프리픽스 → `http://localhost:3000`. 세 곳 전부 헬퍼 재사용으로 교체
+4. 순수 함수라 테스트로 직접 커버 가능 — `siteUrl.test.ts`: override 우선순위, Vercel
+   변수만 있을 때, 둘 다 없을 때(로컬 빌드의 실제 케이스), 빈 문자열은 "설정 안 됨"으로
+   취급(falsy 체크)하는지
+5. 로컬 `.env.local`에 이 두 변수가 원래 없다는 것부터 확인 → 즉 평소 `npm run build`가
+   이미 진짜 "둘 다 없는" 폴백 경로를 타고 있었다는 뜻이라 이 자체가 회귀 테스트 역할
+6. `next build`가 Vercel 전용 env var 없이도 깨지지 않는지 확인(원래도 옵셔널 체이닝이라
+   문제 없어야 하지만 실측), 추가로 dev 서버를 세 가지 env 조합(없음 / Vercel 변수만 /
+   둘 다)으로 각각 띄워 sitemap.xml + robots.txt + 홈페이지 `og:url` 메타 태그까지 실제
+   curl로 확인
+7. lint → test → build
+
+### [실행 + 관찰]
+
+**신규 파일**: `src/lib/siteUrl.ts`(공유 헬퍼), `src/lib/siteUrl.test.ts`(4개 테스트).
+**수정 파일**: `src/app/layout.tsx`, `src/app/sitemap.ts`, `src/app/robots.ts` — 각자
+갖고 있던 `SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"`를
+전부 `getSiteUrl()` 호출로 교체.
+
+**`npm run lint`** — 통과. **`npm run build`**(로컬, 두 env var 모두 미설정) — 클린,
+9개 라우트 동일하게 생성.
+
+**`npm run test`**
+```
+ Test Files  13 passed (13)
+      Tests  106 passed (106)
+```
+106개 전부 통과(기존 102개 + 신규 4개: override 우선순위, Vercel 변수 단독 폴백,
+로컬(둘 다 없음) 폴백, 빈 문자열은 미설정으로 취급).
+
+**실 브라우저/curl 검증** (dev 서버 `-p 3009`, 세 가지 env 조합 각각 별도 기동):
+```
+[env 없음 — 로컬 개발의 실제 상태]
+GET /sitemap.xml → <loc>http://localhost:3000</loc> ...
+GET /robots.txt  → Sitemap: http://localhost:3000/sitemap.xml
+
+[VERCEL_PROJECT_PRODUCTION_URL=trend-dashboard-swart.vercel.app, override 없음]
+GET /sitemap.xml → <loc>https://trend-dashboard-swart.vercel.app</loc> ...
+GET /robots.txt  → Sitemap: https://trend-dashboard-swart.vercel.app/sitemap.xml
+GET /            → <meta property="og:url" content="https://trend-dashboard-swart.vercel.app"/>
+
+[NEXT_PUBLIC_SITE_URL=https://custom-override.example.com 도 함께 설정 — override가 이겨야 함]
+GET /sitemap.xml → <loc>https://custom-override.example.com</loc>
+GET /            → <meta property="og:url" content="https://custom-override.example.com"/>
+```
+세 경로 모두 기대한 대로 정확히 동작 확인. dev 서버 매번 종료 후 포트 확인.
+
+### [검증] — 성공 기준 대조
+1. `layout.tsx`/`sitemap.ts` 폴백 체인을 `NEXT_PUBLIC_SITE_URL` → `VERCEL_PROJECT_
+   PRODUCTION_URL`(https:// 프리픽스) → localhost 순으로 교체, 공유 헬퍼로 동기화
+   → **충족**(`robots.ts`도 같은 헬퍼로 통일 — 요청엔 없었지만 세 번째 복붙 지점이라
+   같이 고치지 않으면 다음에 또 따로 썩을 자리)
+2. `NEXT_PUBLIC_SITE_URL` 로컬에서 unset 후 폴백 확인 → **충족**(애초에 로컬 기본
+   상태가 이미 그 케이스였고, 추가로 명시적 env 조합 3가지 전부 curl로 실측)
+3. `next build`가 이 Vercel 전용 변수들 없이도 깨지지 않음 → **충족**(로컬 빌드가
+   기본적으로 이미 그 조건이라 매 라운드 검증되는 셈)
+4. lint/test 클린 → **충족**, 근거 함께 첨부
+
+### [개선/반복]
+1회 반복으로 모든 기준 충족, 추가 반복 불필요(규칙 9). 이번 건은 내가 반복 15에서 만든
+버그를 오케스트레이터가 프로덕션에서 잡아낸 케이스 — 로컬/테스트 환경에는 애초에
+`NEXT_PUBLIC_SITE_URL`이 없었으니 세 파일 모두 항상 localhost로 조용히 통과했고, lint/
+test/build 어느 것도 이 문제를 드러내지 못했음. 재발 방지책은 코드(폴백 체인 강화)로
+다뤘지만, "환경변수 미설정이 프로덕션에서만 드러나는 종류의 문제"는 이 루프의 로컬
+검증 절차가 구조적으로 못 잡는 범주라는 점은 기록으로 남김.
+
+### [종료]
+4개 성공 기준 모두 실측 증거로 충족. `frontend-loop`에 커밋 진행.
+
+---
+
+## 통합 (merge) — `backend-loop` ← `frontend-loop` (SEO 크롤링 + 요금제 페이지 + siteUrl 폴백 수정, `7c88086`)
+
+> `backend-loop`(HEAD `964ac92`)에서 `git merge frontend-loop`(`7c88086`, 조상 커밋 2개:
+> `1e517d6` SEO/요금제, `7c88086` siteUrl 폴백 강화) 실행. `git merge-base`로 실제 공통
+> 조상(`869b0a6`) 확인 후 진행 — 이번엔 내 쪽(`backend-loop`)이 병합 지점 이후 보안 헤더
+> 커밋을 추가로 쌓아둔 상태라 순수 fast-forward는 아니었음.
+
+### [충돌 및 해소]
+- `LOOP_LOG.md`만 content 충돌. `diff`로 `ours`(HEAD)의 처음 3599줄이 `869b0a6`과 정확히
+  일치함을 먼저 확인한 뒤, `7c88086`이 그 뒤에 추가한 구간(3600~3798행, "반복 15 —
+  프론트엔드" 199줄)만 골라 이어붙임. 임시 파일에 조립 → 마커 없음 확인 → 조인부 확인 →
+  반영.
+- `src/lib/siteUrl.ts`(신규) 확인: 오케스트레이터가 보고한 대로 실제 프로덕션 버그 수정 —
+  `NEXT_PUBLIC_SITE_URL`이 Vercel에 설정된 적이 없어 OG 메타데이터가 계속 localhost를
+  가리키고 있었음. 폴백 체인: 명시적 `NEXT_PUBLIC_SITE_URL` → `VERCEL_PROJECT_PRODUCTION_URL`
+  (Vercel이 프리뷰별로 안 바뀌는 안정적 프로덕션 도메인을 자동 제공하는 플랫폼 env var,
+  수동 설정 불필요) → 로컬 전용 최종 폴백 `localhost:3000`. `layout.tsx`가 이 함수로
+  갈아끼워짐, `sitemap.ts`/`robots.ts` 신규 파일도 동일 함수 사용 — 세 곳이 각자
+  하드코딩하던 걸 한 곳으로 통합.
+- 그 외(`HomeClient.tsx`, `pricing/page.tsx`+테스트, `robots.ts`, `sitemap.ts`,
+  `siteUrl.test.ts`) 전부 자동 병합, 백엔드 이번 라운드(보안 헤더) 변경과 겹치는 파일 없음
+  — `next.config.ts`는 frontend가 건드리지 않음.
+
+### [검증 — 통합 결과 실측]
+
+```
+npm run lint   → 빈 출력, exit 0
+npm run test   → Test Files 13 passed (13), Tests 106 passed (106) (오케스트레이터 보고와 일치)
+npm run build  → Compiled successfully, 신규 3개 정적 라우트(`/pricing`, `/robots.txt`,
+                 `/sitemap.xml`) 추가되어 총 12개 라우트, `/`와 `/opengraph-image.png`
+                 여전히 정적(`○`) — 보안 헤더 라운드의 no-nonce 선택이 이번 병합 이후에도
+                 정적 최적화를 유지함을 재확인
+```
+
+**오케스트레이터가 명시적으로 요청한 재검증 — "OG/sitemap URL이 더 이상 localhost가
+아닌지"**: 이건 실제로는 Vercel 프로덕션 환경 변수(`VERCEL_PROJECT_PRODUCTION_URL`)에
+의존하는 사실이라, 이 세션에서 실제 라이브 Vercel 배포의 값을 직접 관측할 수는 없음
+(그 값은 Vercel 인프라가 빌드 시점에 주입). 대신 그 폴백 로직 자체가 실제로 작동하는지
+직접 시뮬레이션으로 검증:
+- 로컬 dev(env var 없음): `sitemap.xml`/`robots.txt`/`og:url` 전부 정확히
+  `http://localhost:3000`(의도된 로컬 최종 폴백) — 정상.
+- `VERCEL_PROJECT_PRODUCTION_URL=trend-dashboard-example.vercel.app`로 dev 서버 재기동:
+  `sitemap.xml`의 `<loc>`, `og:url` 둘 다 정확히 `https://trend-dashboard-example.vercel.app`로
+  전환됨 — 폴백 체인이 실제로 동작.
+  - **단, `og:image`만 dev 모드에서 여전히 `http://localhost:3001/...`로 남아있는 걸
+    발견** — 처음엔 버그로 의심했으나, 같은 env var로 **프로덕션 빌드**(`npm run build
+    && npm run start`)를 해보니 `og:image`도 정확히
+    `https://trend-dashboard-example.vercel.app/opengraph-image.png?...`로 올바르게
+    나옴 — 즉 이건 `next dev`(Turbopack 개발 서버)가 파일 컨벤션 OG 이미지 라우트를
+    편의상 실제 요청 호스트 기준으로 보여주는 dev 전용 특성이지, 프로덕션 버그가
+    아니었음. "이론적으로 맞을 것"이라 믿지 않고 dev/prod 둘 다 실측한 덕에 이 오탐을
+    바로 걸러낼 수 있었음.
+- 시뮬레이션 완료 후 env var 없이 정상 재빌드해 이후 검증은 전부 실제 배포와 동일한
+  조건(로컬 최종 폴백)으로 진행.
+
+**`npm run dev -- -p 3001` + curl (실 크리덴셜, 전 라우트 + 신규 라우트)**
+```
+GET  /api/trends?region=KR   → sources:['youtube','hackernews'], mocked:False
+GET  /api/trends/history, /api/trends/keyword-history, /auth/callback, /api/watchlist(401),
+     /opengraph-image.png(PNG 확인), cron(200) — 전부 정상
+GET  /pricing      → HTTP 200
+GET  /robots.txt   → HTTP 200
+GET  /sitemap.xml  → HTTP 200
+```
+보안 헤더 5개 전부 여전히 존재(`X-Content-Type-Options`/`X-Frame-Options`/
+`Referrer-Policy`/CSP/조건부 HSTS) — 이번 병합으로 회귀 없음.
+
+**Playwright 실 브라우저 재검증(dev + prod 둘 다)**: 지난 라운드와 동일한 워크스루(홈 로드
+→ 지역 전환 → 로그인 시도 → 키워드 상세 → auth callback)에 더해 **신규 `/pricing`
+페이지도 별도로 방문**해 `securitypolicyviolation`/콘솔 에러 수집:
+```
+CSP violations: []
+Console errors: []
+```
+(dev, prod 둘 다 동일 결과). rate limiting 재확인(35회 병렬, 200/429 혼재). 로그 전체
+스캔: 이미 알려진 클래스 제외 예상 밖 에러 0건(dev 로그의 `GET /?auth_error=1 200`은
+Playwright 워크스루의 의도된 실패 로그인 시도 결과). 두 서버 모두 정상 종료 확인.
+
+### [결론]
+`7c88086` 반영 후 lint/test(106개)/build/dev+prod 전 라우트 curl + Playwright 실 브라우저
+재검증(신규 `/pricing` 포함) + rate-limit 회귀 확인까지 전부 그린. `og:image`의 dev 전용
+호스트 표시가 프로덕션 버그가 아님을 dev/prod 대조로 직접 확인. `backend-loop`에 머지
+커밋 후 `main`으로 병합·푸시 예정. 마이그레이션 관련 블로커 없음(0001~0004 전부 라이브
+적용/검증 완료).
