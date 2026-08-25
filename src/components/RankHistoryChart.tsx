@@ -99,8 +99,7 @@ export function RankHistoryChart({ points }: RankHistoryChartProps) {
       <svg
         viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
         className="w-full touch-none"
-        role="img"
-        aria-label="키워드 순위 추이 차트"
+        aria-hidden="true"
         onPointerMove={handlePointerMove}
         onPointerLeave={() => setHoverIndex(null)}
       >
@@ -151,6 +150,26 @@ export function RankHistoryChart({ points }: RankHistoryChartProps) {
           {hovered.point.rank}위 · {formatShort(hovered.point.fetchedAt)}
         </div>
       )}
+
+      {/* The SVG above is aria-hidden — this table is the real data for
+          screen readers, not a decorative fallback. */}
+      <table className="sr-only">
+        <caption>순위 추이 데이터</caption>
+        <thead>
+          <tr>
+            <th scope="col">시간</th>
+            <th scope="col">순위</th>
+          </tr>
+        </thead>
+        <tbody>
+          {points.map((p, i) => (
+            <tr key={i}>
+              <td>{formatShort(p.fetchedAt)}</td>
+              <td>{p.rank}위</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

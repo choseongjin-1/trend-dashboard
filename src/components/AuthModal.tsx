@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useModalA11y } from "@/hooks/useModalA11y";
 
 interface AuthModalProps {
   open: boolean;
@@ -21,6 +22,7 @@ export function AuthModal({ open, error, onClose, onSignIn, onSignUp }: AuthModa
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const containerRef = useModalA11y(onClose, open);
 
   if (!open) return null;
 
@@ -39,9 +41,11 @@ export function AuthModal({ open, error, onClose, onSignIn, onSignUp }: AuthModa
 
   return (
     <div
+      ref={containerRef}
       role="dialog"
       aria-modal="true"
       aria-label={mode === "signin" ? "로그인" : "회원가입"}
+      tabIndex={-1}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4"
       onClick={onClose}
     >

@@ -1,6 +1,10 @@
+"use client";
+
+import { useState } from "react";
 import type { TrendHistoryPoint } from "@/lib/trends/history";
 import { RankHistoryChart } from "@/components/RankHistoryChart";
 import { EmptyFlaps } from "@/components/EmptyFlaps";
+import { useModalA11y } from "@/hooks/useModalA11y";
 
 interface KeywordDetailModalProps {
   keyword: string;
@@ -12,20 +16,48 @@ interface KeywordDetailModalProps {
 
 /**
  * The payoff view for tracking a keyword: a larger rank-over-time chart than
- * the inline sparkline, backed by GET /api/trends/keyword-history.
+ * the inline sparkline, backed by GET /api/trends/keyword-history. Always
+ * mounted only while it should be open (parent conditionally renders it), so
+ * `useModalA11y` uses its default `open = true` — the mount/unmount cycle
+ * itself is the open/close transition.
  */
 export function KeywordDetailModal({ keyword, regionLabel, history, onClose }: KeywordDetailModalProps) {
+  const containerRef = useModalA11y(onClose);
+  const [shareState, setShareState] = useState<"idle" | "copied">("idle");
   const isLoading = history === undefined;
   const points = history ?? [];
   const hasEnoughData = !isLoading && points.length >= 2;
   const currentRank = points.at(-1)?.rank;
   const bestRank = points.length > 0 ? Math.min(...points.map((p) => p.rank)) : undefined;
 
+  const handleShare = async () => {
+    const url = window.location.href;
+    if (navigator.share) {
+      try {
+        await navigator.share({ title: `${keyword} 순위 추이 - FLIP`, url });
+        return;
+      } catch {
+        // Cancelled or unsupported mid-call — fall through to clipboard copy.
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+      setShareState("copied");
+      setTimeout(() => setShareState("idle"), 2000);
+    } catch {
+      // Clipboard unavailable (permissions, insecure context) — no-op, same
+      // defensive discipline as the rest of the app: never crash on a
+      // best-effort affordance.
+    }
+  };
+
   return (
     <div
+      ref={containerRef}
       role="dialog"
       aria-modal="true"
       aria-label={`${keyword} 순위 추이`}
+      tabIndex={-1}
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4"
       onClick={onClose}
     >
@@ -40,13 +72,21 @@ export function KeywordDetailModal({ keyword, regionLabel, history, onClose }: K
             </p>
             <h2 className="mt-1 truncate font-display text-xl text-flap">{keyword}</h2>
           </div>
-          <button
-            onClick={onClose}
-            aria-label="닫기"
-            className="shrink-0 font-data text-flap-dim hover:text-flap"
-          >
-            ✕
-          </button>
+          <div className="flex shrink-0 items-center gap-3">
+            <button
+              onClick={handleShare}
+              className="font-data text-[11px] text-flap-dim hover:text-flap"
+            >
+              {shareState === "copied" ? "복사됨" : "공유"}
+            </button>
+            <button
+              onClick={onClose}
+              aria-label="닫기"
+              className="font-data text-flap-dim hover:text-flap"
+            >
+              ✕
+            </button>
+          </div>
         </div>
 
         {hasEnoughData ? (
