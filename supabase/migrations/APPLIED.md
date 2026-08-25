@@ -11,3 +11,4 @@ which point its row is updated to **applied** with the date.
 | `0001_initial.sql` | applied | 2026-08-24 | `trend_snapshots` table + index |
 | `0002_mocked_column_and_watchlist.sql` | applied | 2026-08-24 | `trend_snapshots.mocked` column, `watchlist` table + RLS |
 | `0003_rate_limiting.sql` | applied | 2026-08-24 | `rate_limit_counters` table + `increment_rate_limit()` RPC for /api/trends, /api/trends/history, /api/trends/keyword-history |
+| `0004_watchlist_last_seen_rank.sql` | pending | — | `watchlist.last_seen_rank` (nullable int) + `watchlist.last_seen_at` (nullable timestamptz) |

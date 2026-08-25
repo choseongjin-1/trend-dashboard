@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   extractKeywordHistory,
+  findCurrentRank,
   isSnapshotFresh,
   parseSources,
   serializeSources,
@@ -92,6 +93,26 @@ describe("extractKeywordHistory", () => {
 
   it("returns an empty array for an empty snapshot list", () => {
     expect(extractKeywordHistory([], "BIGBANG")).toEqual([]);
+  });
+});
+
+describe("findCurrentRank", () => {
+  it("returns the keyword's rank when it's in the snapshot", () => {
+    const snap = snapshot("2026-08-24T12:00:00.000Z", [
+      { rank: 3, keyword: "BIGBANG", source: "youtube", score: 100 },
+    ]);
+    expect(findCurrentRank(snap, "BIGBANG")).toBe(3);
+  });
+
+  it("returns null when the keyword isn't in the snapshot (fell out of the rankings)", () => {
+    const snap = snapshot("2026-08-24T12:00:00.000Z", [
+      { rank: 1, keyword: "someone else", source: "youtube", score: 100 },
+    ]);
+    expect(findCurrentRank(snap, "BIGBANG")).toBeNull();
+  });
+
+  it("returns null when there is no snapshot at all", () => {
+    expect(findCurrentRank(null, "BIGBANG")).toBeNull();
   });
 });
 

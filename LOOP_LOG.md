@@ -2874,3 +2874,116 @@ rate limiting 회귀 확인: `/api/trends?region=US` 35회 병렬 발사 → 200
 회귀 확인까지 전부 그린 — 순수 fast-forward라 병합 충돌 자체는 없었지만 라이브 배포
 전이라 검증은 생략하지 않음. `backend-loop`가 이미 `775ba6c`(fast-forward 결과)이므로
 별도 머지 커밋 없이 `main`으로 fast-forward·푸시 진행.
+
+---
+
+## 반복 — 백엔드 (워치리스트 last-seen 랭크 추적)
+
+> "관심 등록한 키워드가 크게 움직였다" 알림을 프론트가 매번 처음부터 재계산하지 않고
+> 서버가 안정적으로 뒷받침하도록(기기/세션 간 유지) 워치리스트 아이템별 last-seen 랭크를
+> 서버에 저장. `git merge main` → 이미 최신(변경 없음). **참고**: 이 라운드는 컨텍스트
+> 한도로 세션이 한 번 끊겼다가 재개됨 — 끊긴 시점엔 sync 확인만 마친 상태였고 실제 코드는
+> 전혀 작성되지 않았음을 재개 후 `git status`/`git log`로 먼저 확인한 뒤 처음부터 진행.
+
+### [목표]
+1. 새 마이그레이션(`0004_*.sql`)으로 `watchlist`에 `last_seen_rank`(nullable int),
+   `last_seen_at`(nullable timestamptz) 추가, `APPLIED.md`에 pending으로 등재
+2. `GET /api/watchlist` 응답에 아이템별 CURRENT 랭크(해당 keyword+region의 최신 스냅샷에서
+   조회 — keyword-history의 기존 패턴 재사용)를 `last_seen_rank`와 나란히 포함
+3. `last_seen_rank`를 갱신(확인)하는 방법 — 라우트 확장 방식은 자율 결정
+4. 키워드가 현재 스냅샷에 아예 없으면 현재 랭크는 에러가 아니라 `null`
+5. 새 로직에 대한 테스트, 기존 스위트와 함께 전부 통과. lint/build 클린
+6. 0004 라이브 적용 시 실 검증, 미적용이면 표준 블로커로 명시
+
+### [계획]
+1. `getRecentTrendSnapshots`/`extractKeywordHistory`(keyword-history가 쓰는 기존 패턴)를
+   재사용하되, "현재 랭크"는 전체 히스토리가 아니라 **최신 스냅샷 1개**만 필요하므로 새
+   순수 함수 `findCurrentRank(snapshot, keyword): number | null`을 `persist.ts`에 추가
+   (스냅샷 없음 또는 키워드 없음 둘 다 `null` — 실패가 아니라 정상적인 "현재 랭크 없음"
+   상태로 취급)
+2. `GET`이 워치리스트 아이템마다 개별로 스냅샷을 조회하면 같은 지역을 보는 아이템이 여러 개일
+   때 중복 쿼리가 발생 — 워치리스트 행들의 **고유 지역 집합**에 대해서만 최신 스냅샷을
+   1회씩 병렬 조회(`Promise.all`)한 뒤 각 행에 매칭하는 방식으로 N+1 쿼리 방지
+3. **PATCH 라우트 확장 방식 결정**: `PATCH /api/watchlist { id }` — 클라이언트가 랭크 값을
+   직접 보내는 게 아니라, 서버가 해당 아이템의 keyword+region으로 현재 랭크를 **직접
+   재계산**해서 저장(클라이언트 값을 신뢰하지 않음 — 베이스라인이 실제로 백엔드가 아는 값과
+   어긋날 수 없게 함). 키워드가 현재 랭킹에 없으면 `last_seen_rank`도 `null`로 저장 —
+   이것도 유효한 베이스라인("마지막 확인 시점엔 순위 밖이었다")이지 실패가 아님
+4. `supabase/migrations/0004_watchlist_last_seen_rank.sql` 작성 — `alter table ... add
+   column if not exists` 2개, 둘 다 nullable(신규 아이템은 아직 확인 전이라 둘 다 null이
+   자연스러운 초기 상태)
+5. `src/app/api/watchlist/route.ts` 수정 — `GET`에 `current_rank` 계산 추가(위 2번 방식),
+   `PATCH` 신설(위 3번 방식). `GET`은 읽기 전용으로 유지 — 목록을 보는 것만으로
+   `last_seen_rank`가 조용히 갱신되면 안 됨(그러면 "확인" 액션의 의미가 없어짐), 명시적
+   `PATCH` 호출만 갱신
+6. `persist.test.ts`에 `findCurrentRank` 유닛 테스트 3개 추가(순수 함수라 Supabase 없이
+   테스트 가능). 라우트 자체(`GET`/`POST`/`PATCH`/`DELETE`)는 기존 관례대로 별도
+   `route.test.ts` 없이 curl 실측으로 검증(과거 라운드에서 `/api/watchlist`도 동일)
+7. `npm run lint/test/build` → dev 서버로 401 경로 실측, 서비스롤로 마이그레이션 적용
+   여부 확인, 실 스냅샷 데이터로 조회 로직 자체를 (인증 라우트 우회해서) 직접 검증
+
+### [실행 + 관찰]
+
+**신규 파일**: `supabase/migrations/0004_watchlist_last_seen_rank.sql`
+
+**수정 파일**
+- `src/lib/trends/persist.ts` — `findCurrentRank(snapshot, keyword)` 추가
+- `src/lib/trends/persist.test.ts` — 관련 테스트 3개 추가
+- `src/app/api/watchlist/route.ts` — `GET`에 지역별 배치 스냅샷 조회 + `current_rank` 계산,
+  `PATCH` 신설
+- `supabase/migrations/APPLIED.md` — `0004`를 pending으로 등재
+
+**`npm run lint`** → 빈 출력, exit 0
+
+**`npm run test`**
+```
+Test Files  10 passed (10)
+     Tests  74 passed (74)
+```
+71(기존) + 3(`findCurrentRank`: 랭크 있음/키워드 없어 null/스냅샷 자체 없어 null)
+
+**`npm run build`** → 클린, 동일 9개 라우트 정상 생성(라우트 목록 자체는 안 바뀜 — `/api/watchlist`가
+메서드만 추가됐을 뿐 경로는 그대로)
+
+**dev 서버(`:3001`, 실 크리덴셜) 실측**
+```
+GET/POST/PATCH/DELETE /api/watchlist (세션 없음) → 전부 HTTP 401
+```
+서비스롤 클라이언트로 직접 확인: `watchlist.last_seen_rank` 컬럼 조회 시
+`42703 column watchlist.last_seen_rank does not exist` — **0004 미적용 확인**(예상된 상태,
+표준 블로커 패턴).
+
+**인증 라우트 우회 직접 검증**: `/api/watchlist`는 모든 메서드가 세션을 요구해 실 로그인
+없이는(과거 라운드부터 이어진 동일한 한계 — 로그인 UI 없음) 라우트 자체를 통해서는 검증
+불가. 대신 `findCurrentRank`가 실제로 하는 것과 동일한 조회를 서비스롤로 라이브
+`trend_snapshots`에 대해 직접 실행:
+```
+최신 KR 스냅샷(fetched_at: 2026-08-25T04:12:02.85+00:00)에서
+실제 키워드("알파드라이브원") 조회 → rank=1
+존재하지 않는 키워드("definitely-not-a-real-keyword-xyz") 조회 → rank=null
+```
+유닛 테스트가 검증한 것과 동일한 로직이 실 프로덕션 데이터 형태에도 정확히 맞아떨어짐을
+확인 — 라우트를 통한 end-to-end 검증은 아니지만, 로직과 실데이터 계약이 어긋나지 않음을
+증명.
+
+### [검증] — 성공 기준 대조
+1. `0004_*.sql` 신설 + `APPLIED.md` pending 등재 → **충족**
+2. `GET` 응답에 아이템별 `current_rank` 포함(지역별 배치 조회로 N+1 방지) → **코드 충족**,
+   실 데이터 조회 로직 검증됨. 라우트 자체의 인증 경로는 실 세션 없어 미검증(표준 한계)
+3. `PATCH /api/watchlist { id }` 신설, 서버가 직접 재계산해 저장(클라이언트 값 불신) →
+   **코드 충족**, 동일 이유로 라우트 자체의 인증 경로 실측 불가
+4. 키워드가 현재 스냅샷에 없으면 랭크는 `null`(에러 아님) → **충족**, 유닛 테스트 +
+   실 데이터 조회 둘 다로 확인
+5. `findCurrentRank` 유닛 테스트 3개 + 기존 74개 전부 통과, lint/build 클린 → **충족**
+6. 0004 라이브 미적용 확인(서비스롤로 실측), 표준 블로커로 명시 → **충족**
+
+### [개선/반복]
+1회 반복으로 코드 가능한 부분 전부 완료. 성공 기준 2·3의 "라우트 자체의 인증된 성공
+경로" 실측만 두 가지가 겹쳐서 막혀있음 — (a) `0004` 라이브 미적용, (b) 실 로그인 세션
+부재(반복 3부터 반복마다 동일하게 언급된 한계, 프론트 인증 UI 붙으면 해소). 둘 다 이
+세션 권한 밖 — 규칙 10.
+
+### [종료/중단]
+코드/테스트/마이그레이션 파일 전부 완료. 오케스트레이터에게 필요한 것: (a) `0004` SQL
+Editor 적용, (b) 실 로그인 세션이 생기면(프론트 인증 UI 경유) `GET`/`PATCH`의 실제 인증
+경로 재검증. **중단(규칙 10, 두 블로커 모두 이 세션 밖)**.

@@ -155,6 +155,20 @@ export function extractKeywordHistory(
     .sort((a, b) => a.fetchedAt.localeCompare(b.fetchedAt));
 }
 
+/**
+ * Pure lookup, factored out for unit testing without a Supabase client:
+ * finds a keyword's rank in a single snapshot (typically the latest one
+ * for a region), or null if there's no snapshot at all or the keyword
+ * isn't in it. "Not in it" is a normal outcome (the keyword fell out of
+ * the rankings), not an error — callers (the watchlist route) must treat
+ * null as "no current rank," never surface it as a failure.
+ */
+export function findCurrentRank(snapshot: TrendSnapshotRow | null, keyword: string): number | null {
+  if (!snapshot) return null;
+  const item = snapshot.items.find((i) => i.keyword === keyword);
+  return item ? item.rank : null;
+}
+
 /** Converts a stored snapshot row back into the public TrendsResponse shape. */
 export function snapshotRowToResponse(row: TrendSnapshotRow): TrendsResponse {
   return {
