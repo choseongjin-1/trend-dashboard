@@ -3420,3 +3420,47 @@ HomeClient.tsx`(`viewWatchlistItem`, 확인-온-뷰 이펙트, `WatchlistPanel`�
 
 ### [종료]
 5개 성공 기준 모두(4번은 목업 범위 내에서) 실측 증거로 충족. `frontend-loop`에 커밋 진행.
+
+---
+
+## 통합 (merge) — `backend-loop` ← `frontend-loop` (워치리스트 알림 UI, `6fdb481`)
+
+> `backend-loop`(HEAD `f3f2ba8`)에서 `git merge frontend-loop`(`6fdb481`) 실행.
+> `frontend-loop`의 부모가 정확히 `f3f2ba8`라 순수 fast-forward, 충돌 없음.
+
+### [확인 — 계약 일치]
+`src/lib/watchlist.ts`를 열어 프론트가 내가 지난 라운드에 만든 `GET`/`PATCH` 응답 계약을
+정확히 소비하는지 확인: `current_rank?: number | null`(POST 응답엔 없음을 정확히 문서화한
+주석까지 있음 — POST의 `.select()`가 `current_rank`를 계산하지 않는다는 것까지 정확히
+파악), `last_seen_rank`/`last_seen_at` nullable 처리, `describeRankChange`의 5-상태 분기
+(`current_rank === undefined` → unknown/`null` → dropped/`last_seen_rank === null` → new/
+같으면 unchanged/다르면 moved)가 내가 설계한 API 시맨틱과 정확히 맞아떨어짐 — 별도 조정
+불필요.
+
+### [검증 — 통합 결과 실측]
+```
+npm run lint   → 빈 출력, exit 0
+npm run test   → Test Files 11 passed (11), Tests 89 passed (89) (오케스트레이터 보고와 일치)
+npm run build  → Compiled successfully, 동일 9개 라우트 정상 생성
+```
+
+**`npm run dev -- -p 3001` + curl (실 크리덴셜)**
+```
+GET  /api/trends?region=KR   → sources:['youtube','hackernews'], mocked:False
+GET/POST/PATCH/DELETE /api/watchlist (세션 없음) → 전부 HTTP 401(4개 메서드 전부 재확인 —
+  이번 라운드부터 프론트가 실제로 PATCH를 호출하게 됐으므로 특히 중요)
+GET  /api/trends/history?region=KR                           → HTTP 200
+GET  /api/trends/keyword-history?keyword=HYBE&region=KR      → HTTP 200
+GET  /auth/callback (code 없음)                                → HTTP 307
+GET  /opengraph-image.png                                     → HTTP 200, `file`로 PNG 확인
+```
+rate limiting 회귀 확인: `/api/trends?region=US` 35회 병렬 발사 → 200/429 혼재(정상).
+로그 전체 스캔: 이미 알려진 클래스 제외 `error|warn|fail` **0건**, 모든 로그 라인이
+200/401/429/307 중 하나로만 끝남. 서버 종료 후 포트 확인 → 정상 종료.
+
+### [결론]
+`6fdb481`(워치리스트 알림 UI) 반영 후 lint/test(89개)/build/dev 8라우트 curl(워치리스트
+4개 메서드 포함) + rate-limit 회귀 확인까지 전부 그린. 순수 fast-forward라 병합 충돌
+자체는 없었지만 라이브 배포 전이라 검증은 생략하지 않음. `backend-loop`가 이미
+`6fdb481`(fast-forward 결과)이므로 별도 머지 커밋 없이 `main`으로 fast-forward·푸시 진행.
+마이그레이션 관련 블로커 없음 — 0001~0004 전부 라이브 적용/검증 완료 상태.
