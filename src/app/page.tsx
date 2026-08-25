@@ -127,19 +127,19 @@ export default function Home() {
   const hasMultipleSources = !!data && new Set(data.items.map((item) => item.source)).size > 1;
 
   return (
-    <div className="min-h-screen bg-paper text-ink">
-      <div className="border-b border-ink-dim/20 bg-casing">
+    <div className="min-h-screen bg-casing text-flap">
+      <div className="border-b border-flap-dim/20 bg-panel">
         <div className="mx-auto max-w-2xl px-6 py-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-4">
-              <span className="font-display text-xl tracking-wide text-ink">FLIP</span>
+              <span className="font-display text-xl tracking-wide text-flap">FLIP</span>
               <RegionTabs regions={REGIONS} active={region} onChange={setRegion} />
             </div>
             <div className="flex items-center gap-3">
               <button
                 onClick={() => load(region)}
                 disabled={loading}
-                className="rounded-sm border border-ink-dim/20 px-3 py-1.5 font-data text-xs text-ink-dim transition hover:border-ink-dim/40 hover:text-ink disabled:opacity-50"
+                className="rounded-sm border border-flap-dim/20 px-3 py-1.5 font-data text-xs text-flap-dim transition hover:border-flap-dim/40 hover:text-flap disabled:opacity-50"
               >
                 {loading ? "갱신 중..." : "갱신"}
               </button>
@@ -151,7 +151,7 @@ export default function Home() {
               />
             </div>
           </div>
-          <p className="mt-2 font-body text-xs text-ink-dim">
+          <p className="mt-2 font-body text-xs text-flap-dim">
             인기 급상승 신호를 실시간으로 감지하는 키워드 보드
           </p>
         </div>
@@ -159,7 +159,7 @@ export default function Home() {
 
       <div className="mx-auto max-w-2xl px-6 py-6">
         {data?.mocked && (
-          <div className="mb-4 rounded-sm border border-ink-dim/25 bg-casing px-3 py-2 text-sm text-ink-dim">
+          <div className="mb-4 rounded-sm border border-flap-dim/25 bg-panel px-3 py-2 text-sm text-flap-dim">
             목업 데이터 표시 중입니다. 실제 데이터가 연결되면 자동으로 전환됩니다.
           </div>
         )}
@@ -176,19 +176,19 @@ export default function Home() {
         {loading && !data && (
           <div className="space-y-1">
             {Array.from({ length: 8 }).map((_, i) => (
-              <div key={i} className="h-11 animate-pulse rounded-sm bg-casing" />
+              <div key={i} className="h-11 animate-pulse rounded-sm bg-panel" />
             ))}
           </div>
         )}
 
         {isEmpty && (
-          <div className="flex flex-col items-center gap-3 rounded-sm border border-dashed border-ink-dim/25 px-4 py-14 text-center">
+          <div className="flex flex-col items-center gap-3 rounded-sm border border-dashed border-flap-dim/25 px-4 py-14 text-center">
             <EmptyFlaps />
-            <p className="text-sm font-medium text-ink">표시할 키워드가 없습니다</p>
-            <p className="text-xs text-ink-dim">잠시 후 다시 갱신해보세요.</p>
+            <p className="text-sm font-medium text-flap">표시할 키워드가 없습니다</p>
+            <p className="text-xs text-flap-dim">잠시 후 다시 갱신해보세요.</p>
             <button
               onClick={() => load(region)}
-              className="mt-2 rounded-sm border border-ink-dim/20 px-3 py-1.5 text-xs text-ink-dim hover:border-ink-dim/40 hover:text-ink"
+              className="mt-2 rounded-sm border border-flap-dim/20 px-3 py-1.5 text-xs text-flap-dim hover:border-flap-dim/40 hover:text-flap"
             >
               갱신
             </button>
@@ -210,10 +210,10 @@ export default function Home() {
               return (
                 <li
                   key={item.rank}
-                  className="flap-row flex items-center gap-3 rounded-sm border border-ink-dim/10 bg-casing px-3 py-2.5 shadow-[0_1px_0_rgba(255,255,255,0.5)_inset,0_1px_2px_rgba(24,27,30,0.08)]"
+                  className="flap-row flex items-center gap-3 rounded-sm border border-flap-dim/10 bg-panel px-3 py-2.5 shadow-[0_1px_0_rgba(255,255,255,0.03)_inset,0_2px_4px_rgba(0,0,0,0.35)]"
                   style={{ animationDelay: `${Math.min(i, 20) * 30}ms` }}
                 >
-                  <span className="w-6 text-right font-data text-base font-bold text-ink-dim">
+                  <span className="w-6 text-right font-data text-base font-bold text-flap-dim">
                     {item.rank}
                   </span>
                   {watchlistAvailable && (
@@ -224,19 +224,19 @@ export default function Home() {
                       }}
                       aria-label={isWatched ? "워치리스트에서 제거" : "워치리스트에 추가"}
                       aria-pressed={isWatched}
-                      className={`shrink-0 -m-1 p-1 text-base leading-none ${isWatched ? "text-ink" : "text-ink-dim/50 hover:text-ink"}`}
+                      className={`shrink-0 -m-1 p-1 text-base leading-none ${isWatched ? "text-flap" : "text-flap-dim/50 hover:text-flap"}`}
                     >
                       {isWatched ? "★" : "☆"}
                     </button>
                   )}
                   <button
                     onClick={() => setDetailKeyword(item.keyword)}
-                    className="min-w-0 flex-1 truncate py-1 text-left font-data text-sm text-ink hover:text-ink/80"
+                    className="min-w-0 flex-1 truncate py-1 text-left font-data text-sm text-flap hover:text-flap/80"
                   >
                     {item.keyword}
                   </button>
                   {hasMultipleSources && (
-                    <span className="shrink-0 rounded-sm border border-ink-dim/20 px-1.5 py-0.5 font-data text-[10px] uppercase tracking-wide text-ink-dim">
+                    <span className="shrink-0 rounded-sm border border-flap-dim/20 px-1.5 py-0.5 font-data text-[10px] uppercase tracking-wide text-flap-dim">
                       {sourceLabel(item.source)}
                     </span>
                   )}
@@ -248,7 +248,7 @@ export default function Home() {
                       </span>
                     </>
                   )}
-                  <span className="font-data text-xs text-ink-dim">
+                  <span className="font-data text-xs text-flap-dim">
                     {item.score.toLocaleString()}
                   </span>
                 </li>
@@ -258,7 +258,7 @@ export default function Home() {
         )}
 
         {data && (
-          <p className="mt-4 flex items-center gap-1.5 font-data text-[11px] text-ink-dim">
+          <p className="mt-4 flex items-center gap-1.5 font-data text-[11px] text-flap-dim">
             <span className="live-dot inline-block h-1.5 w-1.5 rounded-full bg-rising" aria-hidden="true" />
             마지막 갱신: {new Date(data.fetchedAt).toLocaleString()}
           </p>

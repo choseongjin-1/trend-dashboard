@@ -55,7 +55,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="ko"
       className={`${blackHanSans.variable} ${ibmPlexSansKR.variable} ${nanumGothicCoding.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col bg-paper text-ink">{children}</body>
+      <body className="min-h-full flex flex-col bg-casing text-flap">{children}</body>
     </html>
   );
 }

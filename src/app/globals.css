@@ -1,34 +1,29 @@
 @import "tailwindcss";
 
 /*
- * FLIP design tokens — light theme, round 10. Same object family as round 9
- * (a consumer desktop flip clock/timer, not an inverted airport departures
- * board — those are dark by physical necessity), but a different real
- * material: brushed aluminum/steel casing instead of ivory plastic. Round
- * 9's warm ivory tone tested as reading like generic "AI-cream" regardless
- * of type/accent pairing, so this round moves the whole base tone to a cool
- * blue-gray family instead — metal reads cooler than plastic under neutral
- * light, which is the material reason for the shift, not an arbitrary
- * "avoid beige" color pick. `paper`/`casing` are the housing/card
- * materials, `ink` carries ALL text and interactive/brand color,
- * `rising`/`falling` are reserved strictly for rank-delta status — never
- * used decoratively elsewhere. See LOOP_LOG.md round 10 for the full plan,
- * self-critique, and contrast checks.
+ * FLIP design tokens — a split-flap departures-board system, not a
+ * decorative "dark mode + one accent" palette. `casing`/`panel` are the
+ * board's physical housing (a specific material reference, not a default),
+ * `flap` is the printed-character cream used for ALL text and interactive/
+ * brand color (buttons, active tab, focus, wordmark) — `rising`/`falling`
+ * are reserved strictly for rank-delta status, never used decoratively
+ * elsewhere. See LOOP_LOG.md round 7 for the full design plan and the
+ * self-critique that led to this color-role split.
  */
 :root {
-  --paper: #edf1f4;
-  --casing: #d7dee3;
-  --ink: #181b1e;
-  --ink-dim: #4c5962;
-  --rising: #1e7a54;
-  --falling: #b23a34;
+  --casing: #0e0e10;
+  --panel: #1c1b1e;
+  --flap: #f2ecdd;
+  --flap-dim: #8b887e;
+  --rising: #e8b23d;
+  --falling: #c4544a;
 }
 
 @theme inline {
-  --color-paper: var(--paper);
   --color-casing: var(--casing);
-  --color-ink: var(--ink);
-  --color-ink-dim: var(--ink-dim);
+  --color-panel: var(--panel);
+  --color-flap: var(--flap);
+  --color-flap-dim: var(--flap-dim);
   --color-rising: var(--rising);
   --color-falling: var(--falling);
   --font-display: var(--font-display);
@@ -37,8 +32,8 @@
 }
 
 body {
-  background: var(--paper);
-  color: var(--ink);
+  background: var(--casing);
+  color: var(--flap);
   font-family: var(--font-body), "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
 }
 

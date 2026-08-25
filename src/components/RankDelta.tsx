@@ -9,10 +9,10 @@ interface RankDeltaProps {
  */
 export function RankDelta({ delta }: RankDeltaProps) {
   if (delta === null) {
-    return <span className="font-data text-xs tabular-nums text-ink-dim/60">–</span>;
+    return <span className="font-data text-xs tabular-nums text-flap-dim/60">–</span>;
   }
   if (delta === 0) {
-    return <span className="font-data text-xs tabular-nums text-ink-dim">0</span>;
+    return <span className="font-data text-xs tabular-nums text-flap-dim">0</span>;
   }
   if (delta > 0) {
     return (

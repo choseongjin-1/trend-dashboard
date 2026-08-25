@@ -8,7 +8,7 @@ interface RegionTabsProps {
 
 /**
  * Region selector styled as physical toggle buttons on the board's control
- * strip — a pressed/unpressed pair state, not a web tab underline.
+ * panel — a pressed/unpressed pair state, not a web tab underline.
  */
 export function RegionTabs({ regions, active, onChange }: RegionTabsProps) {
   return (
@@ -23,8 +23,8 @@ export function RegionTabs({ regions, active, onChange }: RegionTabsProps) {
             onClick={() => onChange(region.code)}
             className={`whitespace-nowrap rounded-sm border px-2.5 py-1.5 font-data text-xs tracking-wide transition sm:px-3 ${
               isActive
-                ? "border-ink/50 bg-ink/10 text-ink"
-                : "border-ink-dim/20 text-ink-dim hover:border-ink-dim/40 hover:text-ink"
+                ? "border-flap/50 bg-flap/10 text-flap"
+                : "border-flap-dim/20 text-flap-dim hover:border-flap-dim/40 hover:text-flap"
             }`}
           >
             {region.code}
