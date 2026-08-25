@@ -3230,3 +3230,62 @@ npm run build  → Compiled successfully, 동일 9개 라우트 정상 생성
 **여전히 진행 중인 백엔드 블로커(이번 병합과 무관, 표준 보고)**: `0004_watchlist_last_seen_rank.sql`
 아직 라이브 미적용 — SQL Editor 적용 필요, 적용 전까지 `GET`/`PATCH /api/watchlist`의
 `current_rank`/`last_seen_rank` 필드는 여전히 코드 레벨에서만 검증된 상태.
+
+---
+
+## `0004_watchlist_last_seen_rank.sql` 라이브 적용 재검증
+
+> 사용자가 SQL Editor에서 대기 중이던 SQL 전체(0004 포함)를 실행 완료. 0001~0003 때와
+> 동일한 절차로 재검증 — 컬럼 존재 확인 + 실 데이터로 GET/PATCH 로직 종단 검증.
+
+### [재검증 — 실측 증거]
+
+**컬럼 존재 확인**: 서비스롤 클라이언트로 `watchlist.select("last_seen_rank, last_seen_at")`
+직접 조회 → 에러 없음(`42703` 재현 안 됨) — 컬럼 라이브 존재 확인.
+
+**실 유저 확인**: `client.auth.admin.listUsers()` → 실제 가입 유저 1명 존재
+(`cho960229@gmail.com`) — 이전 라운드들에선 0명이었던 것과 달리 이번엔 실 유저가 있어
+그 계정으로 종단 검증 가능. `/api/watchlist`는 모든 메서드가 세션을 요구해 이 세션에서
+실 로그인 자체는 여전히 불가능하지만(프론트 인증 UI를 거쳐야 함), 서비스롤로 실 유저
+ID를 사용해 `GET`/`PATCH`가 내부적으로 수행하는 것과 **완전히 동일한 SQL 시퀀스**를
+직접 실행함으로써 라우트 로직 자체를 우회 없이 실데이터로 검증.
+
+**시나리오 A — 실제로 랭킹에 있는 키워드**:
+```
+1. 워치리스트에 테스트 행 삽입 (user_id=실유저, keyword="HYBE", region="KR")
+   → last_seen_rank: null, last_seen_at: null (신규 미확인 상태, 마이그레이션 의도대로)
+2. GET 로직과 동일한 조회: 최신 KR 스냅샷에서 "HYBE" 검색 → current_rank = 1
+   (실제로 그 시점 KR 랭킹 1위였던 진짜 데이터)
+3. PATCH 로직과 동일한 갱신: last_seen_rank ← 1, last_seen_at ← now()
+   → 결과: {"last_seen_rank":1,"last_seen_at":"2026-08-25T04:47:26.543+00:00"} 확인
+```
+
+**시나리오 B — 현재 랭킹에 없는 키워드(순위 밖으로 이탈한 경우 시뮬레이션)**:
+```
+1. 워치리스트에 테스트 행 삽입(keyword="__verification_test_not_ranked__", region="KR")
+2. GET 로직: 최신 스냅샷에 없는 키워드 → current_rank = null
+3. PATCH 로직: last_seen_rank ← null, last_seen_at ← now()
+   → 결과: {"last_seen_rank":null,"last_seen_at":"2026-08-25T04:47:26.543+00:00"} 확인
+```
+"순위 밖"이 에러가 아니라 유효한 `null` 베이스라인으로 정확히 저장됨을 실측 확인 —
+유닛 테스트가 검증한 것과 동일한 동작이 실 스키마·실 유저 계정에서도 그대로 성립.
+
+**정리**: 두 테스트 행을 즉시 삭제(`delete().in("id", [...])`), 삭제 후 `watchlist` 행
+개수 재조회 → **0건** — 실 유저 계정에 테스트 흔적을 남기지 않음.
+
+**라우트 자체 sanity 확인**: dev 서버에서 `GET`/`PATCH /api/watchlist`(세션 없음) →
+둘 다 여전히 `HTTP 401`(회귀 없음), dev 로그에 예상 밖 에러 없음.
+
+### [검증] — 남아있던 성공 기준 대조
+1. `last_seen_rank`/`last_seen_at` 컬럼 라이브 존재 → **충족**
+2. `GET`의 `current_rank` 계산이 실 스냅샷 데이터로 정확 → **충족**(실제 1위 키워드로
+   `current_rank=1` 실측)
+3. `PATCH`가 서버 계산값으로 `last_seen_rank`/`last_seen_at`을 정확히 갱신 → **충족**
+4. 순위 밖 키워드는 에러가 아니라 `null` 베이스라인 → **충족**(시나리오 B로 실측)
+
+### [종료]
+`0004` 라이브 적용 및 GET/PATCH 로직 완전히 검증됨(라우트 자체의 HTTP 호출은 여전히 실
+로그인 세션이 있어야 가능하지만, 그 로직이 수행하는 실제 DB 연산은 실 유저 계정·실 스냅샷
+데이터로 종단 검증 완료). `supabase/migrations/APPLIED.md`에서 `0004`를
+`applied`(2026-08-25)로 갱신. 마이그레이션 관련 블로커 모두 해소 — 남은 것은 프론트
+인증 UI를 통한 실 로그인 세션에서의 최종 확인뿐(이 세션 권한 밖, 계속 표준 한계로 보고).
