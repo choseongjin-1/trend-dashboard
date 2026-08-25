@@ -3706,3 +3706,93 @@ is fine")이며, CTA가 정직하게 disabled 상태이므로 실제로 결제/�
 
 ### [종료]
 5개 성공 기준 모두 실측 증거로 충족. `frontend-loop`에 커밋 진행.
+
+## 반복 16 — 프론트엔드 (SITE_URL 폴백 체인 강화)
+
+### [배경] 및 [목표]
+오케스트레이터가 실제 프로덕션에서 발견: Vercel 환경변수에 `NEXT_PUBLIC_SITE_URL`이
+설정된 적이 없어 `layout.tsx`의 OG/Twitter 메타데이터와 반복 15에서 만든 `sitemap.ts`가
+프로덕션에서도 조용히 `http://localhost:3000`으로 폴백 중이었음(실제 프로덕션 사이트를
+curl해서 `og:url`/`og:image`가 localhost로 나오는 것까지 확인됨) — OG 메타데이터가
+나간 시점부터 모든 공유 링크 미리보기가 깨져 있었고, 이번 sitemap도 그대로 배포됐다면
+검색엔진에 localhost URL을 제출했을 것. 사용자가 Vercel에 값을 직접 설정하는 건
+별도로 진행 중이지만, 이 클래스의 버그가 조용히 재발하지 않도록 폴백 체인 자체를
+견고하게 만드는 게 이번 라운드의 목표: `NEXT_PUBLIC_SITE_URL`(명시적 override) →
+`VERCEL_PROJECT_PRODUCTION_URL`(Vercel이 별도 설정 없이 자동 제공하는, preview마다
+바뀌지 않는 안정적 프로덕션 도메인) → `http://localhost:3000`(로컬 전용 최후 수단).
+
+### [계획]
+1. `git merge main` — 이번엔 이미 최신(원격 main이 아직 반복 15를 병합하지 않은
+   상태였음, 코드 충돌 없음)
+2. 중복 확인: `SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"`
+   패턴이 `layout.tsx`/`sitemap.ts`/`robots.ts` 세 곳에 그대로 복붙되어 있었음(반복 15
+   때 내가 직접 그렇게 만듦) → `src/lib/siteUrl.ts`에 `getSiteUrl()` 공유 헬퍼로 추출
+3. 폴백 순서 구현: explicit `NEXT_PUBLIC_SITE_URL` → `VERCEL_PROJECT_PRODUCTION_URL`을
+   `https://`로 프리픽스 → `http://localhost:3000`. 세 곳 전부 헬퍼 재사용으로 교체
+4. 순수 함수라 테스트로 직접 커버 가능 — `siteUrl.test.ts`: override 우선순위, Vercel
+   변수만 있을 때, 둘 다 없을 때(로컬 빌드의 실제 케이스), 빈 문자열은 "설정 안 됨"으로
+   취급(falsy 체크)하는지
+5. 로컬 `.env.local`에 이 두 변수가 원래 없다는 것부터 확인 → 즉 평소 `npm run build`가
+   이미 진짜 "둘 다 없는" 폴백 경로를 타고 있었다는 뜻이라 이 자체가 회귀 테스트 역할
+6. `next build`가 Vercel 전용 env var 없이도 깨지지 않는지 확인(원래도 옵셔널 체이닝이라
+   문제 없어야 하지만 실측), 추가로 dev 서버를 세 가지 env 조합(없음 / Vercel 변수만 /
+   둘 다)으로 각각 띄워 sitemap.xml + robots.txt + 홈페이지 `og:url` 메타 태그까지 실제
+   curl로 확인
+7. lint → test → build
+
+### [실행 + 관찰]
+
+**신규 파일**: `src/lib/siteUrl.ts`(공유 헬퍼), `src/lib/siteUrl.test.ts`(4개 테스트).
+**수정 파일**: `src/app/layout.tsx`, `src/app/sitemap.ts`, `src/app/robots.ts` — 각자
+갖고 있던 `SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"`를
+전부 `getSiteUrl()` 호출로 교체.
+
+**`npm run lint`** — 통과. **`npm run build`**(로컬, 두 env var 모두 미설정) — 클린,
+9개 라우트 동일하게 생성.
+
+**`npm run test`**
+```
+ Test Files  13 passed (13)
+      Tests  106 passed (106)
+```
+106개 전부 통과(기존 102개 + 신규 4개: override 우선순위, Vercel 변수 단독 폴백,
+로컬(둘 다 없음) 폴백, 빈 문자열은 미설정으로 취급).
+
+**실 브라우저/curl 검증** (dev 서버 `-p 3009`, 세 가지 env 조합 각각 별도 기동):
+```
+[env 없음 — 로컬 개발의 실제 상태]
+GET /sitemap.xml → <loc>http://localhost:3000</loc> ...
+GET /robots.txt  → Sitemap: http://localhost:3000/sitemap.xml
+
+[VERCEL_PROJECT_PRODUCTION_URL=trend-dashboard-swart.vercel.app, override 없음]
+GET /sitemap.xml → <loc>https://trend-dashboard-swart.vercel.app</loc> ...
+GET /robots.txt  → Sitemap: https://trend-dashboard-swart.vercel.app/sitemap.xml
+GET /            → <meta property="og:url" content="https://trend-dashboard-swart.vercel.app"/>
+
+[NEXT_PUBLIC_SITE_URL=https://custom-override.example.com 도 함께 설정 — override가 이겨야 함]
+GET /sitemap.xml → <loc>https://custom-override.example.com</loc>
+GET /            → <meta property="og:url" content="https://custom-override.example.com"/>
+```
+세 경로 모두 기대한 대로 정확히 동작 확인. dev 서버 매번 종료 후 포트 확인.
+
+### [검증] — 성공 기준 대조
+1. `layout.tsx`/`sitemap.ts` 폴백 체인을 `NEXT_PUBLIC_SITE_URL` → `VERCEL_PROJECT_
+   PRODUCTION_URL`(https:// 프리픽스) → localhost 순으로 교체, 공유 헬퍼로 동기화
+   → **충족**(`robots.ts`도 같은 헬퍼로 통일 — 요청엔 없었지만 세 번째 복붙 지점이라
+   같이 고치지 않으면 다음에 또 따로 썩을 자리)
+2. `NEXT_PUBLIC_SITE_URL` 로컬에서 unset 후 폴백 확인 → **충족**(애초에 로컬 기본
+   상태가 이미 그 케이스였고, 추가로 명시적 env 조합 3가지 전부 curl로 실측)
+3. `next build`가 이 Vercel 전용 변수들 없이도 깨지지 않음 → **충족**(로컬 빌드가
+   기본적으로 이미 그 조건이라 매 라운드 검증되는 셈)
+4. lint/test 클린 → **충족**, 근거 함께 첨부
+
+### [개선/반복]
+1회 반복으로 모든 기준 충족, 추가 반복 불필요(규칙 9). 이번 건은 내가 반복 15에서 만든
+버그를 오케스트레이터가 프로덕션에서 잡아낸 케이스 — 로컬/테스트 환경에는 애초에
+`NEXT_PUBLIC_SITE_URL`이 없었으니 세 파일 모두 항상 localhost로 조용히 통과했고, lint/
+test/build 어느 것도 이 문제를 드러내지 못했음. 재발 방지책은 코드(폴백 체인 강화)로
+다뤘지만, "환경변수 미설정이 프로덕션에서만 드러나는 종류의 문제"는 이 루프의 로컬
+검증 절차가 구조적으로 못 잡는 범주라는 점은 기록으로 남김.
+
+### [종료]
+4개 성공 기준 모두 실측 증거로 충족. `frontend-loop`에 커밋 진행.

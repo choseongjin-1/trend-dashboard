@@ -1,7 +1,8 @@
 import type { MetadataRoute } from "next";
 import { REGIONS } from "@/lib/trends/regions";
+import { getSiteUrl } from "@/lib/siteUrl";
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
+const SITE_URL = getSiteUrl();
 
 /**
  * The home route serves different content per `?region=` (KR/US/JP ranking
