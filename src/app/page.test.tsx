@@ -668,4 +668,175 @@ describe("Home dashboard", () => {
       });
     });
   });
+
+  describe("keyword search/filter", () => {
+    const mixedLanguageTrends: TrendsResponse = {
+      ...mockTrends,
+      items: [
+        { rank: 1, keyword: "가을 캠핑 브이로그", source: "youtube", score: 100000 },
+        { rank: 2, keyword: "BIGBANG Concert Recap", source: "youtube", score: 93000 },
+        { rank: 3, keyword: "저속노화 식단 챌린지", source: "youtube", score: 80000 },
+      ],
+    };
+
+    function mixedLanguageFetch(input: RequestInfo | URL): Promise<Response> {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url.includes("/api/trends/history")) {
+        return Promise.resolve(jsonResponse({ error: "not found" }, { ok: false, status: 404 }));
+      }
+      if (url.includes("/api/trends?region=")) {
+        return Promise.resolve(jsonResponse(mixedLanguageTrends));
+      }
+      return Promise.reject(new Error(`Unexpected fetch: ${url}`));
+    }
+
+    it("has a real label associated with the search input", async () => {
+      vi.stubGlobal("fetch", vi.fn(mixedLanguageFetch));
+      render(<HomeClient />);
+      await screen.findByText("가을 캠핑 브이로그");
+
+      expect(screen.getByLabelText(/검색/)).toBeInTheDocument();
+    });
+
+    it("filters by Korean substring, case-insensitively (Hangul has no case, but the match must still work)", async () => {
+      vi.stubGlobal("fetch", vi.fn(mixedLanguageFetch));
+      const user = userEvent.setup();
+      render(<HomeClient />);
+      await screen.findByText("가을 캠핑 브이로그");
+
+      await user.type(screen.getByLabelText(/검색/), "캠핑");
+
+      expect(screen.getByText("가을 캠핑 브이로그")).toBeInTheDocument();
+      expect(screen.queryByText("BIGBANG Concert Recap")).not.toBeInTheDocument();
+      expect(screen.queryByText("저속노화 식단 챌린지")).not.toBeInTheDocument();
+      expect(screen.getByText("1개 결과")).toBeInTheDocument();
+    });
+
+    it("filters by English substring, case-insensitively", async () => {
+      vi.stubGlobal("fetch", vi.fn(mixedLanguageFetch));
+      const user = userEvent.setup();
+      render(<HomeClient />);
+      await screen.findByText("가을 캠핑 브이로그");
+
+      await user.type(screen.getByLabelText(/검색/), "bigbang");
+
+      expect(screen.getByText("BIGBANG Concert Recap")).toBeInTheDocument();
+      expect(screen.queryByText("가을 캠핑 브이로그")).not.toBeInTheDocument();
+      expect(screen.getByText("1개 결과")).toBeInTheDocument();
+    });
+
+    it("shows a distinct 'no matches' state (not the no-data-at-all empty state) with the query and a clear affordance", async () => {
+      vi.stubGlobal("fetch", vi.fn(mixedLanguageFetch));
+      const user = userEvent.setup();
+      render(<HomeClient />);
+      await screen.findByText("가을 캠핑 브이로그");
+
+      await user.type(screen.getByLabelText(/검색/), "완전히없는검색어");
+
+      expect(
+        screen.getByText("‘완전히없는검색어’에 대한 결과가 없습니다"),
+      ).toBeInTheDocument();
+      // Distinct from the "no data at all" empty state's copy.
+      expect(screen.queryByText("표시할 키워드가 없습니다")).not.toBeInTheDocument();
+      expect(screen.queryByRole("list")).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "전체 목록 보기" }));
+      expect(screen.getByText("가을 캠핑 브이로그")).toBeInTheDocument();
+      expect(screen.getByText("BIGBANG Concert Recap")).toBeInTheDocument();
+    });
+
+    it("clears via the inline ✕ button and restores the full list", async () => {
+      vi.stubGlobal("fetch", vi.fn(mixedLanguageFetch));
+      const user = userEvent.setup();
+      render(<HomeClient />);
+      await screen.findByText("가을 캠핑 브이로그");
+
+      const input = screen.getByLabelText(/검색/);
+      await user.type(input, "캠핑");
+      expect(screen.queryByText("BIGBANG Concert Recap")).not.toBeInTheDocument();
+
+      await user.click(screen.getByRole("button", { name: "검색어 지우기" }));
+      expect(input).toHaveValue("");
+      expect(screen.getByText("BIGBANG Concert Recap")).toBeInTheDocument();
+      expect(screen.getByText("저속노화 식단 챌린지")).toBeInTheDocument();
+    });
+
+    it("still opens the deep-linked keyword's detail view even when it's filtered out of the visible list", async () => {
+      setSearch("keyword=" + encodeURIComponent("BIGBANG Concert Recap") + "&region=KR");
+      vi.stubGlobal(
+        "fetch",
+        vi.fn((input: RequestInfo | URL) => {
+          const url = typeof input === "string" ? input : input.toString();
+          if (url.includes("/api/trends/keyword-history")) {
+            return Promise.resolve(
+              jsonResponse({ keyword: "BIGBANG Concert Recap", region: "KR", points: [] }),
+            );
+          }
+          return mixedLanguageFetch(input);
+        }),
+      );
+      const user = userEvent.setup();
+
+      render(<HomeClient />);
+      await screen.findByText("가을 캠핑 브이로그");
+
+      // The modal opens immediately from the deep link, before any typing.
+      const dialog = await screen.findByRole("dialog", { name: "BIGBANG Concert Recap 순위 추이" });
+      expect(dialog).toBeInTheDocument();
+
+      // Type something that would filter the deep-linked keyword out of the
+      // visible list — a shared link opened alongside an active search
+      // shouldn't silently fail to open, and shouldn't close once open
+      // either. The keyword still appears (in the dialog's own heading),
+      // so check its absence from the *ranking row* specifically.
+      await user.type(screen.getByLabelText(/검색/), "캠핑");
+      expect(
+        screen.queryByRole("button", { name: "BIGBANG Concert Recap" }),
+      ).not.toBeInTheDocument();
+      expect(screen.getByRole("dialog", { name: "BIGBANG Concert Recap 순위 추이" })).toBeInTheDocument();
+    });
+
+    it("keeps the watchlist star toggle working for a keyword hidden by the active filter", async () => {
+      mockUseAuth.mockReturnValue({ ...loggedOut, user: { email: "creator@example.com" } });
+      let watchlistState: WatchlistRow[] = [];
+      let nextId = 1;
+      vi.stubGlobal(
+        "fetch",
+        vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+          const url = typeof input === "string" ? input : input.toString();
+          if (url.includes("/api/watchlist")) {
+            if (!init?.method || init.method === "GET") return Promise.resolve(jsonResponse(watchlistState));
+            if (init.method === "POST") {
+              const body = JSON.parse(init.body as string) as { keyword: string; region: string };
+              const row: WatchlistRow = {
+                id: String(nextId++),
+                keyword: body.keyword,
+                region: body.region,
+                created_at: "2026-08-24T00:00:00.000Z",
+                last_seen_rank: null,
+                last_seen_at: null,
+              };
+              watchlistState = [...watchlistState, row];
+              return Promise.resolve(jsonResponse(row, { status: 201 }));
+            }
+          }
+          return mixedLanguageFetch(input);
+        }),
+      );
+      const user = userEvent.setup();
+
+      render(<HomeClient />);
+      await screen.findByText("가을 캠핑 브이로그");
+
+      // Filter down to just the Korean item — the star toggle for it must
+      // still work exactly as it would unfiltered.
+      await user.type(screen.getByLabelText(/검색/), "캠핑");
+      const starButton = await screen.findByRole("button", { name: "워치리스트에 추가" });
+      await user.click(starButton);
+
+      await waitFor(() => {
+        expect(screen.getByRole("button", { name: "워치리스트에서 제거" })).toBeInTheDocument();
+      });
+    });
+  });
 });

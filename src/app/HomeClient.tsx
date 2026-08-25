@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { TrendsResponse } from "@/lib/trends/types";
 import { fetchTrendsHistory, toHistoryMap, computeDelta, TrendHistoryPoint } from "@/lib/trends/history";
@@ -212,6 +212,39 @@ export function HomeClient() {
   // The moment a second source starts flowing, this switches on by itself.
   const hasMultipleSources = !!data && new Set(data.items.map((item) => item.source)).size > 1;
 
+  // Client-side filter over the currently loaded list only — no new API,
+  // and deliberately NOT synced to the URL, so it can never interfere with
+  // ?keyword= deep-linking (that always opens via a separate fetch keyed
+  // by keyword, independent of what's currently visible in the list).
+  const [filterQuery, setFilterQuery] = useState("");
+  const filterInputRef = useRef<HTMLInputElement>(null);
+  const trimmedQuery = filterQuery.trim().toLowerCase();
+  const filteredItems = data
+    ? trimmedQuery
+      ? data.items.filter((item) => item.keyword.toLowerCase().includes(trimmedQuery))
+      : data.items
+    : [];
+  const hasNoMatches = !!data && !isEmpty && trimmedQuery !== "" && filteredItems.length === 0;
+
+  useEffect(() => {
+    // "/" focuses the search box, like GitHub/Slack — but not while a modal's
+    // focus trap is active (would yank focus out from under it), and not
+    // while the user is already typing somewhere (so "/" still types
+    // normally in the auth form, the filter box itself, etc).
+    if (authModalOpen || detailKeyword) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "/") return;
+      const target = e.target as HTMLElement;
+      const isTyping =
+        target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
+      if (isTyping) return;
+      e.preventDefault();
+      filterInputRef.current?.focus();
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [authModalOpen, detailKeyword]);
+
   return (
     <div className="min-h-screen bg-casing text-flap">
       <header className="border-b border-flap-dim/20 bg-panel">
@@ -244,6 +277,40 @@ export function HomeClient() {
       </header>
 
       <main className="mx-auto max-w-2xl px-6 py-6">
+        {data && !isEmpty && (
+          <div className="mb-4">
+            <label
+              htmlFor="keyword-filter"
+              className="mb-1.5 block font-data text-[11px] uppercase tracking-widest text-flap-dim"
+            >
+              검색 <span className="normal-case tracking-normal text-flap-dim/60">(/)</span>
+            </label>
+            <div className="flex items-center gap-2 border-b border-flap-dim/25 focus-within:border-flap">
+              <input
+                id="keyword-filter"
+                ref={filterInputRef}
+                type="text"
+                value={filterQuery}
+                onChange={(e) => setFilterQuery(e.target.value)}
+                placeholder="키워드로 필터링"
+                className="w-full border-0 bg-transparent py-1.5 font-data text-sm text-flap outline-none placeholder:text-flap-dim/50"
+              />
+              {filterQuery && (
+                <button
+                  onClick={() => setFilterQuery("")}
+                  aria-label="검색어 지우기"
+                  className="shrink-0 text-flap-dim hover:text-flap"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+            <p aria-live="polite" className="mt-1 font-data text-[10px] text-flap-dim">
+              {trimmedQuery && `${filteredItems.length}개 결과`}
+            </p>
+          </div>
+        )}
+
         {data?.mocked && (
           <div className="mb-4 rounded-sm border border-flap-dim/25 bg-panel px-3 py-2 text-sm text-flap-dim">
             목업 데이터 표시 중입니다. 실제 데이터가 연결되면 자동으로 전환됩니다.
@@ -289,9 +356,25 @@ export function HomeClient() {
           />
         )}
 
-        {data && !isEmpty && (
+        {hasNoMatches && (
+          <div className="flex flex-col items-center gap-3 rounded-sm border border-dashed border-flap-dim/25 px-4 py-14 text-center">
+            <EmptyFlaps />
+            <p className="text-sm font-medium text-flap">
+              &lsquo;{filterQuery.trim()}&rsquo;에 대한 결과가 없습니다
+            </p>
+            <p className="text-xs text-flap-dim">다른 키워드로 검색해보세요.</p>
+            <button
+              onClick={() => setFilterQuery("")}
+              className="mt-2 rounded-sm border border-flap-dim/20 px-3 py-1.5 text-xs text-flap-dim hover:border-flap-dim/40 hover:text-flap"
+            >
+              전체 목록 보기
+            </button>
+          </div>
+        )}
+
+        {data && !isEmpty && !hasNoMatches && (
           <ol key={revision} className="flex flex-col gap-1">
-            {data.items.map((item, i) => {
+            {filteredItems.map((item, i) => {
               const history = historyMap.get(item.keyword);
               const delta = computeDelta(history);
               const isWatched =
